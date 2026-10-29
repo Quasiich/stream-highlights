@@ -44,6 +44,34 @@ Die Datei ist nicht signiert, deshalb kann Windows beim ersten Start „Der
 Computer wurde durch Windows geschützt“ anzeigen. Dann auf „Weitere
 Informationen“ → „Trotzdem ausführen“ klicken.
 
+### Updates
+
+Beim Start fragt das Programm bei GitHub nach, ob es eine neuere Version
+gibt. Wenn ja, erscheint oben in der Oberfläche ein farbiger Balken
+„Update verfügbar“, und neben dem Programmnamen steht die installierte
+Version hervorgehoben. Installiert wird nie von selbst, sondern erst mit
+**Jetzt aktualisieren**:
+
+- Die neue .exe wird aus dem
+  [Release](https://github.com/Quasiich/stream-highlights/releases/latest)
+  geladen und anhand der Prüfsumme (SHA-256), die GitHub zu jeder Datei
+  angibt, geprüft. Stimmt sie nicht oder bricht der Download ab, läuft die
+  bisherige Version unverändert weiter.
+- Danach startet das Programm neu, die offene Seite lädt von selbst neu.
+  Analysen, Einstellungen und Twitch-Verbindung bleiben erhalten.
+- Die bisherige Version bleibt für den Notfall als
+  `stream-highlights.old.exe` im selben Ordner (beim nächsten Update wird sie
+  ersetzt). Macht die neue Version Probleme: Programm schließen,
+  `stream-highlights.exe` löschen und `stream-highlights.old.exe` in
+  `stream-highlights.exe` umbenennen.
+- Solange ein Live-Mitschnitt läuft (Stream aktiv oder Auswertung nach dem
+  Stream) oder eine Analyse läuft, ist der Knopf gesperrt, mit Hinweis
+  warum. Ist der Live-Mitschnitt nur eingeschaltet und gerade kein Stream
+  aktiv, geht das Update; der Mitschnitt ist nach dem Neustart wieder an.
+
+Mit `npm start` aus dem Quellcode gibt es nur den Hinweis, aktualisiert wird
+dort mit `git pull` und `npm install`.
+
 ### Die .exe selbst bauen
 
 Dafür braucht es einmalig Node.js 26 oder neuer (https://nodejs.org, LTS).
@@ -54,8 +82,17 @@ npm install
 npm run build:exe
 ```
 
-Das Ergebnis liegt in `dist/stream-highlights.exe`. Die Web-Oberfläche ist
-darin enthalten.
+Das Ergebnis liegt in `dist/stream-highlights.exe`. Die Web-Oberfläche und
+die Version aus `package.json` sind darin enthalten. Zum Testen des Updates
+lässt sich eine andere Version einbauen, z. B. mit
+`BUILD_VERSION=1.0.0 npm run build:exe` (in PowerShell vorher
+`$env:BUILD_VERSION="1.0.0"`).
+
+Für ein neues Release: Version in `package.json` erhöhen
+(`npm version 1.2.0 --no-git-tag-version`), committen und pushen, die .exe
+bauen und ein GitHub-Release mit dem Tag `v1.2.0` anlegen, an das genau die
+Datei `stream-highlights.exe` angehängt ist. Nur so finden ältere Versionen
+das Update.
 
 ## Für Entwickler: Kommandozeile
 

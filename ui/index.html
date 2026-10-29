@@ -57,6 +57,24 @@
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
   header h1 span { color: var(--accent); }
+  .app-version { font-size: 12px; color: var(--muted); }
+  .app-version.outdated { color: var(--accent); font-weight: 600; }
+  .update-banner {
+    display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap;
+    padding: 14px 24px; background: var(--accent); color: var(--accent-ink);
+  }
+  .update-banner .update-text { flex: 1; min-width: 240px; }
+  .update-banner strong { font-size: 16px; }
+  .update-banner a { color: var(--accent-ink); }
+  .update-banner .btn { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); font-weight: 700; }
+  .update-banner .btn:disabled { opacity: .6; }
+  .update-banner .update-sub { font-size: 13px; opacity: .9; margin-top: 2px; }
+  .update-banner .progress-bar { flex-basis: 100%; margin: 0; background: rgba(255, 255, 255, .25); }
+  .update-banner .progress-bar div { background: var(--accent-ink); }
+  .update-blocked {
+    flex-basis: 100%; background: var(--panel); color: var(--error); border-radius: 8px;
+    padding: 10px 12px; font-weight: 600; font-size: 14px;
+  }
   .spacer { flex: 1; }
   .layout { display: grid; grid-template-columns: 260px 1fr; gap: 24px; padding: 24px; max-width: 1400px; margin: 0 auto; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; padding: 16px; } }
@@ -184,10 +202,22 @@
 <body>
 <header>
   <h1>stream<span>-</span>highlights</h1>
+  <span class="app-version" id="appVersion"></span>
   <div class="spacer"></div>
   <div class="chip" id="twitchChip"><span class="dot" id="twitchDot"></span><span id="twitchText">Twitch …</span></div>
   <button class="btn small" id="twitchBtn">Mit Twitch verbinden</button>
 </header>
+
+<section class="update-banner hidden" id="updateBanner" role="status" aria-live="polite">
+  <div class="update-text">
+    <strong id="updateTitle">Update verfügbar</strong>
+    <div class="update-sub" id="updateSub"></div>
+  </div>
+  <a id="updateNotes" target="_blank" rel="noopener">Was ist neu?</a>
+  <button class="btn" id="updateBtn">Jetzt aktualisieren</button>
+  <div class="progress-bar hidden" id="updateBar"><div></div></div>
+  <div class="update-blocked hidden" id="updateBlocked" role="alert"></div>
+</section>
 
 <div class="layout">
   <aside>
@@ -790,8 +820,120 @@ $("liveToggle").addEventListener("change", async () => {
 });
 setInterval(() => refreshLive().catch(() => {}), 5000);
 
+// ---- Update -------------------------------------------------------------
+// Nie automatisch: Die Seite zeigt nur an, dass es ein Update gibt; installiert
+// wird erst nach Klick auf "Jetzt aktualisieren".
+let update = null;
+let updatePoll = null;
+
+async function refreshUpdate(force = false) {
+  update = await api("/api/update" + (force ? "?force" : ""));
+  renderUpdate();
+}
+
+function renderUpdate() {
+  const u = update;
+  const installing = u.install.state === "downloading" || u.install.state === "restarting";
+  $("appVersion").textContent = "v" + u.current;
+  $("appVersion").classList.toggle("outdated", u.available);
+  $("appVersion").title = u.available ? "Version " + u.latest + " ist verfügbar" : u.error || "Aktuelle Version";
+
+  $("updateBanner").classList.toggle("hidden", !u.available && !installing);
+  if (!u.available && !installing) return;
+
+  $("updateNotes").href = u.notesUrl || "#";
+  $("updateBar").classList.toggle("hidden", !installing);
+  $("updateBar").classList.toggle("indeterminate", u.install.state === "restarting");
+  $("updateBar").firstElementChild.style.width = (u.install.percent ?? 0) + "%";
+
+  if (u.install.state === "downloading") {
+    $("updateTitle").textContent = "Update auf Version " + u.latest + " wird geladen … " + (u.install.percent ?? 0) + " %";
+    $("updateSub").textContent = "Danach startet das Programm neu, diese Seite verbindet sich von selbst wieder.";
+  } else if (u.install.state === "restarting") {
+    $("updateTitle").textContent = "Version " + u.latest + " ist installiert, Programm startet neu …";
+    $("updateSub").textContent = "Einen Moment, diese Seite lädt gleich von selbst neu.";
+  } else {
+    $("updateTitle").textContent = "Update verfügbar: Version " + u.latest;
+    $("updateSub").textContent =
+      "Installiert ist " + u.current + ". Analysen, Einstellungen und Twitch-Verbindung bleiben erhalten; " +
+      "die bisherige Version bleibt als stream-highlights.old.exe für den Notfall liegen.";
+  }
+
+  // Ohne Knopf, wenn gar nicht per Knopf aktualisiert werden kann (Quellcode)
+  $("updateBtn").classList.toggle("hidden", !u.selfUpdate || installing);
+  $("updateBtn").textContent = u.install.state === "error" ? "Erneut versuchen" : "Jetzt aktualisieren";
+  $("updateBtn").disabled = Boolean(u.blocked) || !u.installable;
+
+  const problem = u.install.state === "error" ? "Update fehlgeschlagen: " + u.install.error + " Die bisherige Version läuft unverändert weiter."
+    : u.blocked && !installing ? u.blocked
+    : !u.installable ? "Für diese Version gibt es noch keine geprüfte .exe auf GitHub."
+    : "";
+  $("updateBlocked").textContent = problem;
+  $("updateBlocked").classList.toggle("hidden", !problem);
+}
+
+$("updateBtn").addEventListener("click", async () => {
+  if (!confirm("Jetzt auf Version " + update.latest + " aktualisieren?\n\nDas Programm lädt die neue Version und startet dabei neu.")) return;
+  $("updateBtn").disabled = true;
+  try {
+    await api("/api/update", { method: "POST" });
+  } catch (err) {
+    update.install = { state: "error", error: err.message };
+    renderUpdate();
+    return;
+  }
+  followUpdate();
+});
+
+// Während des Updates oft nachsehen, im Neustart auf die neue Version warten
+function followUpdate() {
+  clearInterval(updatePoll);
+  // Neu laden, sobald eine andere Version antwortet (ältere melden keine Versionsnummer)
+  const before = update.current;
+  const startedAt = Date.now();
+  updatePoll = setInterval(async () => {
+    if (update.install.state !== "restarting") {
+      try {
+        await refreshUpdate();
+      } catch {
+        // Server schon beendet: Neustart läuft
+        update.install = { state: "restarting" };
+        renderUpdate();
+      }
+      if (update.install.state === "error") clearInterval(updatePoll);
+      return;
+    }
+    try {
+      const s = await api("/api/status");
+      if (s.version !== before) {
+        clearInterval(updatePoll);
+        location.reload();
+      }
+    } catch {
+      // Neue Version noch nicht da
+    }
+    if (Date.now() - startedAt > 90_000) {
+      clearInterval(updatePoll);
+      $("updateTitle").textContent = "Der Neustart dauert ungewöhnlich lange.";
+      $("updateSub").textContent = "Bitte stream-highlights.exe von Hand starten. Klappt das nicht, stream-highlights.old.exe in stream-highlights.exe umbenennen.";
+    }
+  }, 700);
+}
+
+// Sperre (z. B. Live-Mitschnitt) aktuell halten, solange ein Update angeboten wird
+setInterval(() => {
+  if (update?.available && update.install.state !== "downloading" && update.install.state !== "restarting") {
+    refreshUpdate().catch(() => {});
+  }
+}, 10_000);
+
 // ---- Start --------------------------------------------------------------
 (async () => {
+  refreshUpdate()
+    .then(() => {
+      if (update.install.state === "downloading" || update.install.state === "restarting") followUpdate();
+    })
+    .catch(() => {});
   await refreshStatus();
   await refreshLive();
   selectTab(status.twitch ? "vods" : "history");

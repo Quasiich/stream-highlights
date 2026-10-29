@@ -9,6 +9,7 @@ import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAn
 import { defaultRecorderOptions } from "./recorder.ts";
 import { findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
+import { backupPath, canSelfUpdate, checkForUpdate, installUpdate, launchNewVersion, VERSION } from "./update.ts";
 
 export const PORT = 4777;
 /** Einstellungen, die einen Neustart überdauern (im Programmordner) */
@@ -45,6 +46,11 @@ let login: { state: "idle" | "pending" | "done" | "error"; userCode?: string; ve
   state: "idle",
 };
 
+/** Selbst-Update der .exe, siehe POST /api/update */
+let install: { state: "idle" | "downloading" | "restarting" | "error"; percent?: number; error?: string } = { state: "idle" };
+/** Laufende HTTP-Server, damit sie vor dem Neustart den Port freigeben */
+let servers: Server[] = [];
+
 /**
  * Lokaler Server für die Web-Oberfläche. Lauscht nur auf dieser Maschine und
  * nimmt nur Anfragen an, die von der eigenen Seite kommen.
@@ -75,9 +81,10 @@ export function startServer(html: () => Promise<string>, port = PORT): Promise<S
       server.once("error", reject);
       server.listen(port, host, () => resolveListen(server));
     });
-  return Promise.all([listen("127.0.0.1"), listen("::1").catch(() => undefined)]).then((servers) =>
-    servers.filter((s): s is Server => s !== undefined),
-  );
+  return Promise.all([listen("127.0.0.1"), listen("::1").catch(() => undefined)]).then((list) => {
+    servers = list.filter((s): s is Server => s !== undefined);
+    return servers;
+  });
 }
 
 async function route(req: IncomingMessage, res: ServerResponse, html: () => Promise<string>) {
@@ -92,6 +99,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   if (req.method === "GET" && path === "/api/status") {
     const auth = await loadAuth();
     return send(res, 200, {
+      version: VERSION,
       twitch: auth ? { login: auth.login ?? null } : null,
       // Nur eine eigene Client-ID zurückgeben, die gemeinsame App braucht keine Eingabe
       clientId: auth && auth.clientId !== DEFAULT_CLIENT_ID ? auth.clientId : null,
@@ -178,6 +186,37 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return send(res, 200, liveStatus());
   }
 
+  if (path === "/api/update" && req.method === "GET") {
+    const info = await checkForUpdate(url.searchParams.has("force"));
+    const { asset, ...rest } = info;
+    return send(res, 200, {
+      ...rest,
+      installable: Boolean(asset),
+      selfUpdate: canSelfUpdate(),
+      blocked: updateBlocked(),
+      install,
+      backup: canSelfUpdate() && existsSync(backupPath()),
+    });
+  }
+
+  if (path === "/api/update" && req.method === "POST") {
+    const blocked = updateBlocked();
+    if (blocked) return send(res, 409, { error: blocked });
+    const info = await checkForUpdate(true);
+    if (!info.available) return send(res, 400, { error: `Du hast bereits die neueste Version (${info.current}).` });
+    if (!info.asset) return send(res, 400, { error: "Für diese Version gibt es keine geprüfte .exe auf GitHub." });
+
+    install = { state: "downloading", percent: 0 };
+    installUpdate(info, (percent) => (install = { state: "downloading", percent }))
+      .then(() => {
+        install = { state: "restarting" };
+        // Kurz warten, damit die Oberfläche "Neustart" noch abholen kann
+        setTimeout(() => void restartIntoNewVersion(), 1000);
+      })
+      .catch((err) => (install = { state: "error", error: err.message }));
+    return send(res, 202, install);
+  }
+
   if (path === "/api/login" && req.method === "GET") return send(res, 200, login);
 
   if (path === "/api/login" && req.method === "POST") {
@@ -227,6 +266,41 @@ function analyzeOptions(body: any): AnalyzeOptions {
       bits: num(body.minBits, defaultOptions.eventMinimums.bits),
     },
   };
+}
+
+// ---- Selbst-Update --------------------------------------------------------
+
+/** Warum gerade nicht aktualisiert werden darf, sonst null */
+function updateBlocked(): string | null {
+  if (!canSelfUpdate()) return "Das Update per Knopf gibt es nur in der stream-highlights.exe. Im Quellcode: git pull und npm install.";
+  const liveState = live.service?.status().state;
+  if (liveState === "recording" || liveState === "ending" || liveState === "analyzing") {
+    return "Update nicht möglich, solange ein Live-Mitschnitt läuft. Bitte warten, bis der Stream beendet und ausgewertet ist.";
+  }
+  if (job && !job.finished) return "Update nicht möglich, solange eine Analyse läuft.";
+  if (install.state === "downloading" || install.state === "restarting") return "Das Update läuft bereits.";
+  return null;
+}
+
+/** Gibt den Port frei, startet die neue .exe und beendet diese. */
+async function restartIntoNewVersion(): Promise<void> {
+  await shutdownLive();
+  await Promise.all(
+    servers.map(
+      (s) =>
+        new Promise<void>((done) => {
+          s.close(() => done());
+          s.closeAllConnections();
+        }),
+    ),
+  );
+  // Port und --no-minimize übernehmen; den Browser hat der Nutzer schon offen.
+  const args: string[] = [];
+  const portIndex = process.argv.indexOf("--port");
+  if (portIndex > 0 && process.argv[portIndex + 1]) args.push("--port", process.argv[portIndex + 1]);
+  if (process.argv.includes("--no-minimize")) args.push("--no-minimize");
+  launchNewVersion(process.execPath, args);
+  setTimeout(() => process.exit(0), 300);
 }
 
 // ---- Live-Mitschnitt ------------------------------------------------------
