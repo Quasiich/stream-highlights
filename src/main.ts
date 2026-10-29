@@ -37,12 +37,13 @@ async function main() {
 
   console.log(`stream-highlights ${VERSION} läuft.${updated ? " (gerade aktualisiert)" : ""}`);
   console.log(`Oberfläche: ${url}`);
-  console.log("Dieses Fenster offen lassen. Schließen beendet das Programm.");
+  console.log("Dieses Fenster offen lassen, solange du das Programm nutzt.");
+  console.log("Beenden: hier Strg+C drücken oder das Fenster schließen.");
   // Nach einem Update ist die Oberfläche schon offen (es kommt auch --no-open mit)
   const openBrowser = !process.argv.includes("--no-open") && !updated;
   if (openBrowser) openUrl(url);
   // Das Fenster wird nur gebraucht, um das Programm zu beenden: aus dem Weg damit.
-  if (packaged && (openBrowser || updated) && !process.argv.includes("--no-minimize")) minimizeOwnConsole();
+  if (packaged && (openBrowser || updated) && !process.argv.includes("--no-minimize")) minimizeOwnConsole(updated);
 
   // Live-Mitschnitt sauber schließen; SIGHUP kommt unter Windows beim Schließen des Fensters.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {

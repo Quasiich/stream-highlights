@@ -18,7 +18,8 @@ export type ToolProgress = (message: string, percent?: number) => void;
 export function findTwitchDownloader(): string | undefined {
   const local = resolve(EXE);
   if (existsSync(local)) return local;
-  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["TwitchDownloaderCLI"], { encoding: "utf8" });
+  // windowsHide: sonst hängt "where" kurz am Konsolenfenster der .exe
+  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["TwitchDownloaderCLI"], { encoding: "utf8", windowsHide: true });
   const found = which.status === 0 ? which.stdout.split(/\r?\n/)[0]?.trim() : "";
   return found || undefined;
 }
