@@ -15,10 +15,14 @@ const CHECK_INTERVAL_MS = 60 * 60_000;
 
 // Beim Bauen der .exe von esbuild eingesetzt (scripts/build-exe.ts)
 declare const __APP_VERSION__: string | undefined;
+declare const __APP_COMMIT__: string | undefined;
 
 /** Version dieses Programms: in der .exe eingebaut, sonst aus package.json */
 export const VERSION: string =
   typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : JSON.parse(readFileSync(resolve("package.json"), "utf8")).version;
+
+/** Git-Commit, aus dem die .exe gebaut wurde; aus dem Quellcode gestartet "Quellcode" */
+export const COMMIT: string = typeof __APP_COMMIT__ === "string" ? __APP_COMMIT__ : "Quellcode";
 
 export interface UpdateInfo {
   current: string;

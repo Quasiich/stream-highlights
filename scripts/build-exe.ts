@@ -11,6 +11,10 @@ import { build } from "esbuild";
 const exe = process.platform === "win32" ? "dist/stream-highlights.exe" : "dist/stream-highlights";
 // Version aus package.json; BUILD_VERSION überschreibt sie (z. B. zum Testen des Updates)
 const version = process.env.BUILD_VERSION || JSON.parse(await readFile("package.json", "utf8")).version;
+// Commit, aus dem gebaut wird, für die Fehlersuche; "+lokal", wenn es nicht committete Änderungen gibt
+const git = (...args: string[]) => spawnSync("git", args, { encoding: "utf8" });
+const head = git("rev-parse", "--short", "HEAD");
+const commit = head.status === 0 ? head.stdout.trim() + (git("status", "--porcelain").stdout.trim() ? "+lokal" : "") : "unbekannt";
 
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist");
@@ -23,7 +27,7 @@ await build({
   target: "node22",
   outfile: "dist/app.cjs",
   logLevel: "warning",
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  define: { __APP_VERSION__: JSON.stringify(version), __APP_COMMIT__: JSON.stringify(commit) },
 });
 
 await writeFile(
@@ -45,4 +49,4 @@ if (sea.status !== 0) process.exit(sea.status ?? 1);
 
 await rm("dist/app.cjs");
 await rm("dist/sea-config.json");
-console.log(`Fertig: ${exe} (Version ${version})`);
+console.log(`Fertig: ${exe} (Version ${version}, Commit ${commit})`);

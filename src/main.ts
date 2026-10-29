@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import * as sea from "node:sea";
 import { minimizeOwnConsole } from "./console.ts";
 import { openUrl, PORT, readHtmlFromDisk, restoreLive, shutdownLive, startServer } from "./server.ts";
-import { checkForUpdate, VERSION } from "./update.ts";
+import { checkForUpdate, COMMIT, VERSION } from "./update.ts";
 
 /** Nach einem Update: so lange auf den Port warten, bis die alte Version ihn freigegeben hat */
 const UPDATE_PORT_WAIT_MS = 15_000;
@@ -35,7 +35,10 @@ async function main() {
     throw err;
   }
 
-  console.log(`stream-highlights ${VERSION} läuft.${updated ? " (gerade aktualisiert)" : ""}`);
+  // Version für die Fehlersuche: im Fenstertitel (auch in der Taskleiste) und als erste Zeile
+  process.title = `stream-highlights v${VERSION}`;
+  console.log(`stream-highlights v${VERSION} (Build ${COMMIT})${updated ? ", gerade aktualisiert" : ""}`);
+  console.log("Läuft.");
   console.log(`Oberfläche: ${url}`);
   console.log("Dieses Fenster offen lassen, solange du das Programm nutzt.");
   console.log("Beenden: hier Strg+C drücken oder das Fenster schließen.");
