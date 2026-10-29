@@ -19,14 +19,14 @@ test("compareVersions vergleicht Zahl für Zahl, Vorabversionen zählen weniger"
 
 const release = {
   tag_name: "v1.2.0",
-  html_url: "https://github.com/Quasiich/stream-highlights/releases/tag/v1.2.0",
+  html_url: "https://github.com/Quasiich/stream-highlights-releases/releases/tag/v1.2.0",
   published_at: "2026-11-01T10:00:00Z",
   assets: [
     {
       name: "stream-highlights.exe",
       size: 10,
       digest: "sha256:" + "ab".repeat(32),
-      browser_download_url: "https://github.com/Quasiich/stream-highlights/releases/download/v1.2.0/stream-highlights.exe",
+      browser_download_url: "https://github.com/Quasiich/stream-highlights-releases/releases/download/v1.2.0/stream-highlights.exe",
     },
   ],
 };

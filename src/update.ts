@@ -5,8 +5,12 @@ import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as sea from "node:sea";
 
-/** Releases kommen nur von hier */
-export const REPO = "Quasiich/stream-highlights";
+/**
+ * Releases kommen nur von hier: ein eigenes, öffentliches Repository, damit
+ * Update-Prüfung und Download auch ohne GitHub-Anmeldung gehen, wenn der
+ * Quellcode privat ist. Bis 1.2.2 lagen die Releases im Quellcode-Repository.
+ */
+export const REPO = "Quasiich/stream-highlights-releases";
 // Nur zum Testen auf ein nachgebautes Release umlenkbar
 const LATEST_URL = process.env.STREAM_HIGHLIGHTS_RELEASE_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
 const ASSET_NAME = "stream-highlights.exe";

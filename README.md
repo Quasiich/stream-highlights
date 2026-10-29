@@ -55,7 +55,7 @@ Version hervorgehoben. Installiert wird nie von selbst, sondern erst mit
 **Jetzt aktualisieren**:
 
 - Die neue .exe wird aus dem
-  [Release](https://github.com/Quasiich/stream-highlights/releases/latest)
+  [Release](https://github.com/Quasiich/stream-highlights-releases/releases/latest)
   geladen und anhand der Prüfsumme (SHA-256), die GitHub zu jeder Datei
   angibt, geprüft. Stimmt sie nicht oder bricht der Download ab, läuft die
   bisherige Version unverändert weiter.
@@ -94,9 +94,21 @@ lässt sich eine andere Version einbauen, z. B. mit
 
 Für ein neues Release: Version in `package.json` erhöhen
 (`npm version 1.2.0 --no-git-tag-version`), committen und pushen, die .exe
-bauen und ein GitHub-Release mit dem Tag `v1.2.0` anlegen, an das genau die
-Datei `stream-highlights.exe` angehängt ist. Nur so finden ältere Versionen
-das Update.
+bauen und im öffentlichen Repository
+[Quasiich/stream-highlights-releases](https://github.com/Quasiich/stream-highlights-releases)
+ein Release mit dem Tag `v1.2.0` anlegen, an das genau die Datei
+`stream-highlights.exe` angehängt ist. Nur so finden ältere Versionen das
+Update:
+
+```
+gh release create v1.2.0 dist/stream-highlights.exe --repo Quasiich/stream-highlights-releases --title "v1.2.0" --notes-file notes.md
+```
+
+Die Releases liegen dort und nicht im Quellcode-Repository, damit Update-Prüfung
+und Download ohne GitHub-Anmeldung funktionieren, auch wenn der Quellcode
+privat ist. Versionen bis 1.2.2 suchen Updates noch im Quellcode-Repository;
+sie kommen nur weiter, solange dort ein Release mit einer neueren Version
+(ab 1.2.3) liegt, das öffentlich erreichbar ist.
 
 ## Für Entwickler: Kommandozeile
 
