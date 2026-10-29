@@ -198,10 +198,6 @@ Ablauf:
   vollständigen Chat per TwitchDownloaderCLI. Endete ein Stream, während das
   Programm nicht lief, wird der Mitschnitt beim nächsten Start ausgewertet.
 
-Der Mitschnitt braucht das Recht `user:read:chat`. Wer sich vor Einführung
-des Live-Mitschnitts mit Twitch verbunden hat, muss einmal trennen und neu
-verbinden; das Programm sagt dann Bescheid.
-
 Erneuert ein Programm das Twitch-Token, wird das alte ungültig. Deshalb nicht
 dieselbe `.twitch-auth.json` gleichzeitig auf dem Server und am PC verwenden,
 sondern auf beiden getrennt anmelden. Den Mitschnitt nur an einer Stelle
