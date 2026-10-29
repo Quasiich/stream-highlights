@@ -7,6 +7,7 @@
     "build:exe": "tsx scripts/build-exe.ts",
     "analyze": "tsx src/cli.ts",
     "login": "tsx src/login.ts",
+    "live": "tsx src/live.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

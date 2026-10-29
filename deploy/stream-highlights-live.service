@@ -1,0 +1,21 @@
+# Live-Mitschnitt als systemd-Dienst, Einrichtung siehe README („Automatisch auf einem Server“).
+# Pfade und Benutzer an den eigenen Server anpassen, dann:
+#   sudo cp deploy/stream-highlights-live.service /etc/systemd/system/
+#   sudo systemctl enable --now stream-highlights-live
+[Unit]
+Description=stream-highlights: Twitch-Chat live mitschneiden und auswerten
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=streamhl
+WorkingDirectory=/opt/stream-highlights
+ExecStart=/usr/bin/node --import tsx src/live.ts
+Restart=always
+RestartSec=10
+# Beim Stoppen den Mitschnitt sauber schließen, er wird beim nächsten Start fortgesetzt
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

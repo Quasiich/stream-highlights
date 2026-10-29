@@ -16,6 +16,7 @@ const page = (ids: string[], cursor?: string) => ({
     view_count: 120,
     thumbnail_url: `https://static-cdn.jtvnw.net/cf_vods/abc/${id}/thumb/thumb0-%{width}x%{height}.jpg`,
     type: "archive",
+    stream_id: `9${id}`,
   })),
   pagination: cursor ? { cursor } : {},
 });
@@ -37,6 +38,7 @@ test("parseVods liest VODs, Vorschaubild und Cursor", () => {
     length: 10921,
     views: 120,
     thumbnail: "https://static-cdn.jtvnw.net/cf_vods/abc/111/thumb/thumb0-320x180.jpg",
+    streamId: "9111",
   });
   assert.equal(parseVods(page(["1"])).cursor, undefined, "letzte Seite hat keinen Cursor");
 });

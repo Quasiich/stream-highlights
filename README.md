@@ -100,8 +100,10 @@ Einmalig, dauert eine Minute:
 
 Ohne Oberfläche geht dasselbe im Projektordner mit `npm run login`.
 
-Das Programm bekommt dabei nur Leserechte (`user:read:broadcast`): Es kann
-deine Stream-Marker und Kanal-Einstellungen lesen, aber nichts ändern. Die
+Das Programm bekommt dabei nur Leserechte: `user:read:broadcast` für deine
+Stream-Marker und Kanal-Einstellungen, `user:read:chat` für den
+[Live-Mitschnitt](#automatisch-auf-einem-server-live-mitschnitt) deines
+Chats. Es kann nichts ändern und nichts in den Chat schreiben. Die
 Anmeldung landet in `.twitch-auth.json` im Programmordner. Die Datei wird
 nicht auf GitHub hochgeladen. Gib sie auch sonst nicht weiter. Das Programm
 erneuert die Anmeldung selbst. Erst wenn es 30 Tage nicht benutzt wurde,
@@ -152,6 +154,57 @@ später in der Highlight-Liste.
   Beschreibungen.
 - Ohne Anmeldung, oder bei VODs anderer Kanäle (Twitch gibt Marker nur an den
   eigenen Kanal heraus), läuft alles wie gewohnt nur mit dem Chat.
+
+## Automatisch auf einem Server (Live-Mitschnitt)
+
+Statt den Chat nach dem Stream herunterzuladen, kann stream-highlights
+dauerhaft auf einem Server (z. B. einem VPS) laufen, den Chat während des
+Streams über den offiziellen Weg von Twitch
+([EventSub](https://dev.twitch.tv/docs/eventsub/)) mitschreiben und nach dem
+Stream-Ende selbst auswerten:
+
+```
+npm run live
+```
+
+Ablauf:
+
+- Geht dein Kanal live (`stream.online`), landet jede Chat-Nachricht sowie
+  jeder Sub, Raid und Cheer laufend in `output/live/<Stream-ID>.jsonl`.
+- Nach dem Stream-Ende (`stream.offline`) wartet das Programm 10 Minuten
+  (`--grace`), falls der Stream nur kurz abgebrochen ist. Geht er in der Zeit
+  weiter, wird einfach weitergeschrieben.
+- Danach sucht es das VOD zum Stream, schreibt den Chat nach
+  `output/<VOD-ID>/chat.json` und analysiert wie gewohnt, inklusive
+  Streamer-Markern. Ohne gespeichertes VOD heißt der Ordner wie die Stream-ID.
+- Wird das Programm mitten im Stream neu gestartet oder verliert es die
+  Verbindung, setzt es den Mitschnitt fort. Fehlen dadurch insgesamt mehr als
+  2 Minuten (`--max-gap`), lädt es nach dem Stream stattdessen den
+  vollständigen Chat per TwitchDownloaderCLI (unter Linux x64 ebenfalls
+  automatisch). Endete ein Stream, während das Programm nicht lief, wird der
+  Mitschnitt beim nächsten Start ausgewertet.
+
+Voraussetzungen: Node.js 26, `npm install`, und einmal `npm run login` im
+Projektordner auf dem Server. Die Anmeldung per Gerätecode klappt auch ohne
+Browser auf dem Server: Code am eigenen Rechner auf twitch.tv/activate
+eingeben. Wer sich vor Einführung des Live-Mitschnitts angemeldet hat,
+muss sich einmal neu anmelden, damit der Chat-Scope dazukommt;
+`npm run live` sagt dann Bescheid.
+
+Hinweis: Erneuert ein Programm das Twitch-Token, wird das alte ungültig.
+Deshalb nicht dieselbe `.twitch-auth.json` gleichzeitig auf dem Server und
+am PC verwenden, sondern auf beiden getrennt anmelden.
+
+### Als Dienst einrichten (systemd)
+
+Eine Vorlage liegt in `deploy/stream-highlights-live.service`. Pfad
+(`/opt/stream-highlights`) und Benutzer (`streamhl`) anpassen, dann:
+
+```
+sudo cp deploy/stream-highlights-live.service /etc/systemd/system/
+sudo systemctl enable --now stream-highlights-live
+journalctl -u stream-highlights-live -f
+```
 
 ## So wird bewertet
 

@@ -23,13 +23,29 @@ export interface ChatLog {
   messages: ChatMessage[];
 }
 
+/** Kennung der chat.json, die der Live-Mitschnitt (`npm run live`) schreibt */
+export const LIVE_FORMAT = "stream-highlights-live";
+
+/** Inhalt einer live mitgeschnittenen chat.json */
+export interface LiveChatFile {
+  format: typeof LIVE_FORMAT;
+  video: { id?: string; title?: string; channel?: string; length?: number; streamId: string; startedAt: string };
+  messages: ChatMessage[];
+}
+
 /**
  * Liest eine Chat-JSON von TwitchDownloaderCLI:
  *   TwitchDownloaderCLI chatdownload --id <VOD-ID> -o chat.json
+ * oder eine live mitgeschnittene (siehe LiveChatFile).
  */
 export async function loadChat(path: string): Promise<ChatLog> {
   const raw = JSON.parse(await readFile(path, "utf8"));
-  return parseTwitchDownloader(raw);
+  return raw?.format === LIVE_FORMAT ? parseLiveChat(raw) : parseTwitchDownloader(raw);
+}
+
+export function parseLiveChat(raw: LiveChatFile): ChatLog {
+  const { id, title, channel, length } = raw.video;
+  return { videoId: id, title, channel, length, messages: [...raw.messages].sort((a, b) => a.offset - b.offset) };
 }
 
 export function parseTwitchDownloader(raw: any): ChatLog {

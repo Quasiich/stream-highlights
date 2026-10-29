@@ -16,13 +16,20 @@ export function resolveClientId(custom?: string): string {
   return custom?.trim() || process.env.TWITCH_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID;
 }
 
-/** Reicht zum Lesen der Stream-Marker des eigenen Kanals. */
-const SCOPES = "user:read:broadcast";
+/**
+ * user:read:broadcast für die Stream-Marker, user:read:chat für den
+ * Live-Mitschnitt des eigenen Chats (`npm run live`). Beides nur lesend.
+ */
+const SCOPES = "user:read:broadcast user:read:chat";
+/** Ohne diesen Scope kann der Live-Mitschnitt den Chat nicht abonnieren. */
+export const CHAT_SCOPE = "user:read:chat";
 const DEVICE_URL = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const VALIDATE_URL = "https://id.twitch.tv/oauth2/validate";
 const MARKERS_URL = "https://api.twitch.tv/helix/streams/markers";
 const VIDEOS_URL = "https://api.twitch.tv/helix/videos";
+const STREAMS_URL = "https://api.twitch.tv/helix/streams";
+const EVENTSUB_URL = "https://api.twitch.tv/helix/eventsub/subscriptions";
 
 export interface TwitchAuth {
   clientId: string;
@@ -44,6 +51,16 @@ export interface Vod {
   views: number;
   /** Vorschaubild in 320×180, leer solange Twitch noch keins erzeugt hat */
   thumbnail: string;
+  /** ID des Streams, aus dem das VOD stammt */
+  streamId?: string;
+}
+
+/** Ein laufender Stream des eigenen Kanals. */
+export interface LiveStream {
+  id: string;
+  /** Beginn (ISO) */
+  startedAt: string;
+  title: string;
 }
 
 /** Ein Stream-Marker, den der Streamer während des Streams gesetzt hat. */
@@ -121,7 +138,15 @@ async function waitForLogin(clientId: string, device_code: string, interval: num
   throw new Error("Der Code ist abgelaufen. Bitte erneut mit Twitch verbinden.");
 }
 
-async function validate(accessToken: string): Promise<{ login?: string; user_id?: string }> {
+interface Validation {
+  login?: string;
+  user_id?: string;
+  scopes?: string[];
+  /** Restlaufzeit des Access-Tokens in Sekunden */
+  expires_in?: number;
+}
+
+async function validate(accessToken: string): Promise<Validation> {
   const res = await fetch(VALIDATE_URL, { headers: { Authorization: `OAuth ${accessToken}` } });
   return res.ok ? ((await res.json()) as any) : {};
 }
@@ -209,13 +234,77 @@ async function whoAmI(auth: TwitchAuth, authPath: string): Promise<Pick<TwitchAu
 }
 
 /**
- * GET auf die Twitch-API mit gespeicherter Anmeldung. Ein abgelaufenes Token
+ * Prüft die gespeicherte Anmeldung und erneuert das Token, wenn es ungültig
+ * ist oder in der nächsten Stunde abläuft. Twitch verlangt von dauerhaft
+ * laufenden Programmen, das Token stündlich zu prüfen.
+ */
+export async function checkAuth(authPath = AUTH_FILE): Promise<TwitchAuth & { scopes: string[] }> {
+  let auth = await loadAuth(authPath);
+  if (!auth) throw new Error("Nicht mit Twitch verbunden. Bitte zuerst `npm run login` ausführen.");
+  let who = await validate(auth.accessToken);
+  if (!who.user_id || (who.expires_in ?? 0) < 3600) {
+    auth = await refresh(auth);
+    who = await validate(auth.accessToken);
+    if (!who.user_id) throw new Error("Twitch-Anmeldung ungültig. Bitte erneut verbinden (`npm run login`).");
+    auth = { ...auth, login: who.login, userId: who.user_id };
+    await saveAuth(auth, authPath);
+  }
+  return { ...auth, login: who.login ?? auth.login, userId: who.user_id ?? auth.userId, scopes: who.scopes ?? [] };
+}
+
+/** Der laufende Stream des Kanals, undefined wenn offline. */
+export async function fetchLiveStream(userId: string, authPath = AUTH_FILE): Promise<LiveStream | undefined> {
+  const url = new URL(STREAMS_URL);
+  url.searchParams.set("user_id", userId);
+  url.searchParams.set("type", "live");
+  const { res } = await helix(url, authPath);
+  if (!res.ok) throw new Error(`Twitch antwortet ${res.status} beim Abfragen des Stream-Status.`);
+  const s = ((await res.json()) as any).data?.[0];
+  return s ? { id: String(s.id), startedAt: String(s.started_at), title: String(s.title ?? "") } : undefined;
+}
+
+/** Das VOD zu einem Stream unter den letzten Archiv-VODs des Kanals, falls Twitch eins gespeichert hat. */
+export async function findVodForStream(streamId: string, authPath = AUTH_FILE): Promise<Vod | undefined> {
+  const { vods } = await fetchVods(10, undefined, authPath);
+  return vods.find((v) => v.streamId === streamId);
+}
+
+/**
+ * Abonniert ein EventSub-Ereignis für eine WebSocket-Sitzung. Bei WebSockets
+ * gehören die Abos zur Sitzung und enden mit ihr.
+ */
+export async function subscribeEventSub(
+  type: string,
+  condition: Record<string, string>,
+  sessionId: string,
+  authPath = AUTH_FILE,
+): Promise<void> {
+  const { res } = await helix(new URL(EVENTSUB_URL), authPath, {
+    type,
+    version: "1",
+    condition,
+    transport: { method: "websocket", session_id: sessionId },
+  });
+  if (!res.ok) {
+    const body: any = await res.json().catch(() => ({}));
+    throw new Error(`EventSub-Abo ${type} abgelehnt (${res.status}: ${body.message ?? "unbekannt"}).`);
+  }
+}
+
+/**
+ * Anfrage an die Twitch-API mit gespeicherter Anmeldung (GET, mit `body` POST). Ein abgelaufenes Token
  * wird einmal erneuert, gespeichert und die Anfrage wiederholt.
  */
-async function helix(url: URL, authPath: string): Promise<{ res: Response; auth: TwitchAuth }> {
+async function helix(url: URL, authPath: string, body?: unknown): Promise<{ res: Response; auth: TwitchAuth }> {
   let auth = await loadAuth(authPath);
   if (!auth) throw new Error("Nicht angemeldet. Einrichtung siehe README, Abschnitt „Streamer-Marker“.");
-  const get = (a: TwitchAuth) => fetch(url, { headers: { "Client-Id": a.clientId, Authorization: `Bearer ${a.accessToken}` } });
+  const headers = (a: TwitchAuth): Record<string, string> => ({
+    "Client-Id": a.clientId,
+    Authorization: `Bearer ${a.accessToken}`,
+    ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+  });
+  const get = (a: TwitchAuth) =>
+    fetch(url, body === undefined ? { headers: headers(a) } : { method: "POST", headers: headers(a), body: JSON.stringify(body) });
   let res = await get(auth);
   if (res.status === 401) {
     auth = await refresh(auth);
@@ -237,6 +326,7 @@ export function parseVods(body: any): { vods: Vod[]; cursor?: string } {
     thumbnail: String(v.thumbnail_url ?? "").includes("_404/")
       ? ""
       : String(v.thumbnail_url ?? "").replace("%{width}", "320").replace("%{height}", "180"),
+    streamId: v.stream_id ? String(v.stream_id) : undefined,
   }));
   return { vods, cursor: body?.pagination?.cursor || undefined };
 }
