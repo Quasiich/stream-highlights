@@ -114,6 +114,29 @@
   }
   .history li button:hover, .history li button.active { background: var(--accent-soft); }
   .history .title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px -4px 12px; }
+  .tab {
+    flex: 1; border: 0; background: none; cursor: pointer; padding: 8px 6px; font-size: 13px; font-weight: 600;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .vods { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .vods button {
+    width: 100%; text-align: left; border: 0; background: none; padding: 6px; border-radius: 8px; cursor: pointer;
+    display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; align-items: start;
+  }
+  .vods button:hover, .vods button.active { background: var(--accent-soft); }
+  .thumb-wrap { position: relative; display: block; }
+  .thumb-wrap .badge { position: absolute; left: 4px; bottom: 4px; font-size: 11px; padding: 1px 6px; }
+  .thumb { width: 88px; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--panel-2); object-fit: cover; display: block; }
+  .vod-title { font-size: 13px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .vod-meta { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .badge.done { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .more { width: 100%; margin-top: 10px; }
+  .side-note { font-size: 13px; color: var(--muted); }
+  .side-note .btn { margin-top: 10px; }
   .result-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
   .result-head h2 { font-size: 17px; margin: 0 0 4px; }
   .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
@@ -166,8 +189,22 @@
 <div class="layout">
   <aside>
     <div class="panel">
-      <h3>Bisherige Analysen</h3>
-      <ul class="history" id="history"><li class="muted small">Noch keine.</li></ul>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tabVods" aria-controls="paneVods" aria-selected="false">Deine VODs</button>
+        <button class="tab" role="tab" id="tabHistory" aria-controls="paneHistory" aria-selected="true">Analysen</button>
+      </div>
+      <div id="paneVods" role="tabpanel" aria-labelledby="tabVods" class="hidden">
+        <div id="vodsDisconnected" class="side-note hidden">
+          Verbinde dich mit Twitch, dann erscheinen hier automatisch deine vergangenen Streams.
+          <button class="btn small" id="vodsConnect">Mit Twitch verbinden</button>
+        </div>
+        <ul class="vods" id="vods"></ul>
+        <div id="vodsStatus" class="side-note hidden"></div>
+        <button class="btn small more hidden" id="vodsMore">Ältere laden</button>
+      </div>
+      <div id="paneHistory" role="tabpanel" aria-labelledby="tabHistory">
+        <ul class="history" id="history"><li class="muted small">Noch keine.</li></ul>
+      </div>
     </div>
   </aside>
 
@@ -324,13 +361,19 @@ $("twitchBtn").addEventListener("click", async () => {
     if (!confirm("Twitch-Verbindung trennen? Stream-Marker werden dann nicht mehr berücksichtigt.")) return;
     await api("/api/logout", { method: "POST" });
     await refreshStatus();
+    resetVods();
     return;
   }
+  openLogin();
+});
+$("vodsConnect").addEventListener("click", openLogin);
+
+function openLogin() {
   $("loginSetup").classList.remove("hidden");
   $("loginWait").classList.add("hidden");
   $("loginError").classList.add("hidden");
   $("loginDialog").showModal();
-});
+}
 for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => $("loginDialog").close());
 
 $("loginStart").addEventListener("click", async () => {
@@ -357,6 +400,8 @@ async function pollLogin() {
   if (login.state === "pending") return setTimeout(pollLogin, 2000);
   if (login.state === "done") {
     await refreshStatus();
+    resetVods();
+    selectTab("vods");
     $("loginStatus").textContent = "Verbunden als " + (status.twitch?.login || "?") + ". Du kannst das Fenster schließen.";
     setTimeout(() => $("loginDialog").close(), 1500);
   } else if (login.state === "error") {
@@ -426,6 +471,7 @@ function follow(jobId) {
     source.close();
     setBusy(false);
     const { id } = JSON.parse(e.data);
+    markAnalyzed(id);
     await loadHistory();
     await showReport(id);
   });
@@ -461,6 +507,104 @@ async function loadHistory() {
   return reports;
 }
 
+// ---- Reiter ---------------------------------------------------------------
+function selectTab(name) {
+  for (const [tab, pane, key] of [["tabVods", "paneVods", "vods"], ["tabHistory", "paneHistory", "history"]]) {
+    $(tab).setAttribute("aria-selected", String(key === name));
+    $(pane).classList.toggle("hidden", key !== name);
+  }
+  if (name === "vods" && !vodState.loaded) loadVods();
+}
+$("tabVods").addEventListener("click", () => selectTab("vods"));
+$("tabHistory").addEventListener("click", () => selectTab("history"));
+
+// ---- Deine VODs -----------------------------------------------------------
+const VODS_FIRST = 5;
+const VODS_MORE = 3;
+let vodState = { items: [], cursor: null, loaded: false, loading: false };
+
+function resetVods() {
+  vodState = { items: [], cursor: null, loaded: false, loading: false };
+  renderVods();
+  if (!$("paneVods").classList.contains("hidden")) loadVods();
+}
+
+async function loadVods(more = false) {
+  if (vodState.loading) return;
+  if (!status?.twitch) {
+    vodState.loaded = true;
+    return renderVods();
+  }
+  vodState.loading = true;
+  vodState.error = null;
+  renderVods();
+  try {
+    const params = new URLSearchParams({ first: String(more ? VODS_MORE : VODS_FIRST) });
+    if (more && vodState.cursor) params.set("after", vodState.cursor);
+    const page = await api("/api/vods?" + params);
+    vodState.items = more ? vodState.items.concat(page.vods) : page.vods;
+    vodState.cursor = page.cursor;
+    vodState.loaded = true;
+  } catch (err) {
+    vodState.error = err.message;
+  } finally {
+    vodState.loading = false;
+    renderVods();
+  }
+}
+$("vodsMore").addEventListener("click", () => loadVods(true));
+
+function renderVods() {
+  const connected = Boolean(status?.twitch);
+  $("vodsDisconnected").classList.toggle("hidden", connected || !vodState.loaded);
+  $("vods").innerHTML = vodState.items
+    .map(
+      (v) => `<li><button data-id="${esc(v.id)}" class="${v.id === currentId ? "active" : ""}" title="${esc(v.title)}">
+        <span class="thumb-wrap">
+          ${v.thumbnail ? `<img class="thumb" src="${esc(v.thumbnail)}" alt="" loading="lazy">` : '<span class="thumb"></span>'}
+          ${v.analyzed ? '<span class="badge done">✓ Analysiert</span>' : ""}
+        </span>
+        <span>
+          <span class="vod-title">${esc(v.title || "VOD " + v.id)}</span>
+          <span class="vod-meta">
+            <span>${new Date(v.createdAt).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" })}</span>
+            <span>${clock(v.length)}</span>
+          </span>
+        </span>
+      </button></li>`,
+    )
+    .join("");
+  for (const b of $("vods").querySelectorAll("button")) b.addEventListener("click", () => pickVod(b.dataset.id));
+
+  let note = "";
+  if (vodState.loading) note = vodState.items.length ? "" : "Lade deine VODs …";
+  else if (vodState.error) note = "Fehler: " + vodState.error;
+  else if (connected && vodState.loaded && !vodState.items.length) note = "Keine gespeicherten Streams gefunden. Twitch hebt VODs nur eine begrenzte Zeit auf.";
+  $("vodsStatus").textContent = note;
+  $("vodsStatus").classList.toggle("hidden", !note);
+  $("vodsMore").classList.toggle("hidden", !connected || !vodState.cursor || !vodState.items.length);
+  $("vodsMore").disabled = vodState.loading;
+  $("vodsMore").textContent = vodState.loading && vodState.items.length ? "Lädt …" : "Ältere laden";
+}
+
+/** Analysierte VODs zeigen ihr Ergebnis, andere landen im Eingabefeld, damit vorher noch Einstellungen möglich sind. */
+async function pickVod(id) {
+  const vod = vodState.items.find((v) => v.id === id);
+  if (vod?.analyzed) return showReport(id);
+  $("vodInput").value = "https://www.twitch.tv/videos/" + id;
+  for (const b of $("vods").querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === id);
+  $("analyzeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("analyzeBtn").focus();
+}
+
+function markAnalyzed(id) {
+  const vod = vodState.items.find((v) => v.id === id);
+  if (vod) {
+    vod.analyzed = true;
+    renderVods();
+  }
+}
+
 // ---- Ergebnis -----------------------------------------------------------
 async function showReport(id) {
   const r = await api("/api/reports/" + encodeURIComponent(id));
@@ -476,6 +620,7 @@ async function showReport(id) {
   }
   currentId = id;
   for (const b of $("history").querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === id);
+  for (const b of $("vods").querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === id);
   const v = r.video;
   const markerCount = r.highlights.filter((h) => h.source !== "chat").length;
 
@@ -563,6 +708,7 @@ function playHighlight(videoId, h, row) {
 // ---- Start --------------------------------------------------------------
 (async () => {
   await refreshStatus();
+  selectTab(status.twitch ? "vods" : "history");
   const reports = await loadHistory();
   if (status.running) {
     $("vodInput").value = status.running.input;

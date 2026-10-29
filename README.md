@@ -25,6 +25,12 @@ Highlight spielt die Stelle im eingebetteten Twitch-Player ab. Links stehen
 alle bisherigen Analysen. Über **Mit Twitch verbinden** oben rechts
 richtest du die [Streamer-Marker](#streamer-marker-optional) ein.
 
+Bist du mit Twitch verbunden, zeigt der Reiter **Deine VODs** links deine
+letzten 5 Streams, **Ältere laden** holt jeweils 3 weitere. Ein Klick auf ein
+schon analysiertes VOD (✓ Analysiert) öffnet das Ergebnis, bei allen anderen
+landet der Link im Eingabefeld, sodass du vor dem Start noch die
+Einstellungen anpassen kannst.
+
 Die Datei ist nicht signiert, deshalb kann Windows beim ersten Start „Der
 Computer wurde durch Windows geschützt“ anzeigen. Dann auf „Weitere
 Informationen“ → „Trotzdem ausführen“ klicken.

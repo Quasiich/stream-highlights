@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { defaultOptions } from "./analyze.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { findTwitchDownloader } from "./tools.ts";
-import { AUTH_FILE, loadAuth, startLogin } from "./twitch.ts";
+import { AUTH_FILE, fetchVods, loadAuth, startLogin } from "./twitch.ts";
 
 export const PORT = 4777;
 
@@ -88,6 +88,16 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   }
 
   if (req.method === "GET" && path === "/api/reports") return send(res, 200, await listReports());
+
+  if (req.method === "GET" && path === "/api/vods") {
+    if (!existsSync(AUTH_FILE)) return send(res, 401, { error: "Nicht mit Twitch verbunden." });
+    const first = Math.min(20, num(url.searchParams.get("first"), 5));
+    const page = await fetchVods(first, url.searchParams.get("after") || undefined);
+    return send(res, 200, {
+      vods: page.vods.map((v) => ({ ...v, analyzed: existsSync(join(OUTPUT_DIR, v.id, "highlights.json")) })),
+      cursor: page.cursor ?? null,
+    });
+  }
 
   const reportMatch = path.match(/^\/api\/reports\/([\w-]+)$/);
   if (req.method === "GET" && reportMatch) {
