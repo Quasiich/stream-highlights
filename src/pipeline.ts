@@ -4,7 +4,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import { type ChatLog, loadChat } from "./chat.ts";
 import { type AnalyzeOptions, defaultOptions, findHighlights, type Highlight } from "./analyze.ts";
-import { collectEvents, type EventSummary, isNotable, type StreamEvent, summarize } from "./events.ts";
+import { collectEvents, type EventMinimums, type EventSummary, isNotable, type StreamEvent, summarize } from "./events.ts";
 import { toMarkdown } from "./format.ts";
 import { ensureTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, fetchMarkers, type Marker } from "./twitch.ts";
@@ -28,7 +28,8 @@ export interface Report {
   markers: Marker[];
   /** Warum keine Marker geladen wurden, falls zutreffend */
   markerNote?: string;
-  events: { summary: EventSummary; list: StreamEvent[] };
+  /** list enthält nur Events ab den Mindestwerten, mit denen analysiert wurde */
+  events: { summary: EventSummary; list: StreamEvent[]; minimums: EventMinimums };
 }
 
 export interface AnalysisResult {
@@ -78,13 +79,17 @@ export async function runAnalysis(
     highlights,
     markers,
     markerNote: note,
-    events: { summary: summarize(events), list: events.filter(isNotable) },
+    events: {
+      summary: summarize(events),
+      list: events.filter((e) => isNotable(e, opts.eventMinimums)),
+      minimums: opts.eventMinimums,
+    },
   };
 
   const dir = join(outDir, log.videoId ?? "local");
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "highlights.json"), JSON.stringify(report, null, 2));
-  await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events));
+  await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events, opts.eventMinimums));
   return { log, highlights, events, report, dir };
 }
 

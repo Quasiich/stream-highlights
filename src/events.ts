@@ -20,12 +20,18 @@ export interface EventSummary {
 }
 
 /** Ab wann ein Event einzeln aufgelistet wird */
-export const EVENT_MINIMUMS = {
+export interface EventMinimums {
   /** Subs pro Gift-Bombe */
-  giftedSubs: 5,
+  giftedSubs: number;
   /** Zuschauer pro Raid */
-  raidViewers: 10,
+  raidViewers: number;
   /** Bits pro Cheer */
+  bits: number;
+}
+
+export const defaultEventMinimums: EventMinimums = {
+  giftedSubs: 5,
+  raidViewers: 10,
   bits: 500,
 };
 
@@ -71,18 +77,18 @@ export function summarize(events: StreamEvent[]): EventSummary {
 }
 
 /**
- * Gift-Bomben, Raids und Cheers ab EVENT_MINIMUMS. Einzelne Subs und
- * Geschenk-Subs stehen nur in der Summe.
+ * Gift-Bomben, Raids und Cheers ab den eingestellten Mindestwerten. Einzelne
+ * Subs und Geschenk-Subs stehen nur in der Summe.
  */
-export function isNotable(e: StreamEvent): boolean {
+export function isNotable(e: StreamEvent, min: EventMinimums = defaultEventMinimums): boolean {
   switch (e.type) {
     case "submysterygift":
-      return (e.amount ?? 0) >= EVENT_MINIMUMS.giftedSubs;
+      return (e.amount ?? 0) >= min.giftedSubs;
     case "raid":
       // Ohne Zuschauerzahl (älteres Format) lieber anzeigen als verschlucken
-      return e.amount === undefined || e.amount >= EVENT_MINIMUMS.raidViewers;
+      return e.amount === undefined || e.amount >= min.raidViewers;
     case "bits":
-      return (e.amount ?? 0) >= EVENT_MINIMUMS.bits;
+      return (e.amount ?? 0) >= min.bits;
     default:
       return false;
   }

@@ -1,4 +1,5 @@
 import type { ChatLog, ChatMessage } from "./chat.ts";
+import { defaultEventMinimums, type EventMinimums } from "./events.ts";
 import type { Marker } from "./twitch.ts";
 
 export interface AnalyzeOptions {
@@ -20,6 +21,8 @@ export interface AnalyzeOptions {
   markerLeadSeconds: number;
   /** Nachlauf nach einem Streamer-Marker */
   markerTailSeconds: number;
+  /** Ab wann Gift-Bomben, Raids und Cheers einzeln aufgelistet werden */
+  eventMinimums: EventMinimums;
 }
 
 export const defaultOptions: AnalyzeOptions = {
@@ -32,6 +35,7 @@ export const defaultOptions: AnalyzeOptions = {
   minScore: 1.8,
   markerLeadSeconds: 60,
   markerTailSeconds: 30,
+  eventMinimums: defaultEventMinimums,
 };
 
 export interface Bucket {

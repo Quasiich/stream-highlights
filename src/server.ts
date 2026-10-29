@@ -80,6 +80,9 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
         bucket: defaultOptions.bucketSeconds,
         gap: defaultOptions.minGapSeconds,
         markerLead: defaultOptions.markerLeadSeconds,
+        minGifts: defaultOptions.eventMinimums.giftedSubs,
+        minRaid: defaultOptions.eventMinimums.raidViewers,
+        minBits: defaultOptions.eventMinimums.bits,
       },
     });
   }
@@ -103,6 +106,11 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
       bucketSeconds: num(body.bucket, defaultOptions.bucketSeconds),
       minGapSeconds: num(body.gap, defaultOptions.minGapSeconds),
       markerLeadSeconds: num(body.markerLead, defaultOptions.markerLeadSeconds),
+      eventMinimums: {
+        giftedSubs: num(body.minGifts, defaultOptions.eventMinimums.giftedSubs),
+        raidViewers: num(body.minRaid, defaultOptions.eventMinimums.raidViewers),
+        bits: num(body.minBits, defaultOptions.eventMinimums.bits),
+      },
     };
     if (body.refresh) await rm(join(OUTPUT_DIR, parseVideoId(input)!, "chat.json"), { force: true });
 

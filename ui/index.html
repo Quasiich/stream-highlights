@@ -83,6 +83,11 @@
   summary { cursor: pointer; color: var(--muted); font-size: 14px; }
   .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
   .options label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
+  .options input { color: var(--text); font-size: 15px; }
+  .thresholds { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 14px; margin: 14px 0 0; }
+  .thresholds legend { font-size: 13px; color: var(--muted); padding: 0 6px; }
+  .thresholds .options { margin-top: 4px; }
+  .thresholds-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .check { display: flex !important; align-items: center; gap: 8px; grid-template-columns: none; }
   .chip {
     display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
@@ -173,6 +178,18 @@
         <input type="text" id="vodInput" placeholder="https://www.twitch.tv/videos/…" autocomplete="off" aria-label="VOD-Link oder VOD-ID" required>
         <button class="btn primary" id="analyzeBtn" type="submit">Analysieren</button>
       </form>
+      <fieldset class="thresholds">
+        <legend>Subs, Raids &amp; Bits einzeln auflisten ab</legend>
+        <div class="options">
+          <label>Gift-Bombe (Subs) <input type="number" id="optMinGifts" min="1" max="1000"></label>
+          <label>Raid (Zuschauer) <input type="number" id="optMinRaid" min="1" max="100000"></label>
+          <label>Cheer (Bits) <input type="number" id="optMinBits" min="1" max="1000000"></label>
+        </div>
+        <div class="thresholds-foot">
+          <span class="small muted">Alles darunter zählt nur in der Summe. Die Highlights ändern sich dadurch nicht.</span>
+          <button class="btn small" type="button" id="resetThresholds">Standard</button>
+        </div>
+      </fieldset>
       <details>
         <summary>Erweiterte Einstellungen</summary>
         <div class="options">
@@ -264,8 +281,43 @@ async function refreshStatus() {
   for (const [key, el] of [["top", "optTop"], ["gap", "optGap"], ["bucket", "optBucket"], ["markerLead", "optMarkerLead"]]) {
     if (!$(el).value) $(el).value = status.defaults[key];
   }
+  const saved = loadThresholds();
+  for (const [key, el] of THRESHOLD_FIELDS) {
+    if (!$(el).value) $(el).value = saved[key] ?? status.defaults[key];
+  }
   return status;
 }
+
+// ---- Schwellen für Subs, Raids & Bits ------------------------------------
+// Die zuletzt benutzten Werte merkt sich der Browser, damit sie nicht vor
+// jeder Analyse neu eingetragen werden müssen.
+const THRESHOLD_FIELDS = [["minGifts", "optMinGifts"], ["minRaid", "optMinRaid"], ["minBits", "optMinBits"]];
+const THRESHOLD_KEY = "stream-highlights.thresholds";
+
+function loadThresholds() {
+  try {
+    return JSON.parse(localStorage.getItem(THRESHOLD_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveThresholds(values) {
+  try {
+    localStorage.setItem(THRESHOLD_KEY, JSON.stringify(values));
+  } catch {
+    // Ohne Speicher gelten beim nächsten Start wieder die Standardwerte
+  }
+}
+
+function readThresholds() {
+  return Object.fromEntries(THRESHOLD_FIELDS.map(([key, el]) => [key, $(el).value]));
+}
+
+$("resetThresholds").addEventListener("click", () => {
+  for (const [key, el] of THRESHOLD_FIELDS) $(el).value = status.defaults[key];
+  saveThresholds({});
+});
 
 $("twitchBtn").addEventListener("click", async () => {
   if (status?.twitch) {
@@ -318,6 +370,8 @@ const STAGE_LABEL = { tools: "Vorbereitung", chat: "Chat", markers: "Streamer-Ma
 $("analyzeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("analyzeError").classList.add("hidden");
+  const thresholds = readThresholds();
+  saveThresholds(thresholds);
   try {
     const job = await api("/api/analyze", {
       method: "POST",
@@ -328,6 +382,7 @@ $("analyzeForm").addEventListener("submit", async (e) => {
         bucket: $("optBucket").value,
         markerLead: $("optMarkerLead").value,
         refresh: $("optRefresh").checked,
+        ...thresholds,
       },
     });
     follow(job.id);
@@ -413,6 +468,7 @@ async function showReport(id) {
   r.video = r.video || { id };
   r.video.id = r.video.id || id;
   r.events = r.events || { summary: { subs: 0, giftedSubs: 0, raids: 0, bits: 0 }, list: [] };
+  r.events.minimums = r.events.minimums || { giftedSubs: 5, raidViewers: 10, bits: 500 };
   for (const h of r.highlights) {
     h.source = h.source || "chat";
     h.markers = h.markers || [];
@@ -440,6 +496,7 @@ async function showReport(id) {
     .join("");
 
   const s = r.events.summary;
+  const min = r.events.minimums;
   const eventRows = r.events.list
     .map((e) => `<tr><td class="num"><a href="${vodUrl(v.id, e.offset)}" target="_blank" rel="noopener">${clock(e.offset)}</a></td><td>${esc(e.user)}</td><td>${esc(describe(e))}</td></tr>`)
     .join("");
@@ -468,7 +525,7 @@ async function showReport(id) {
     </div>
     <div class="panel" style="margin-top:18px">
       <h3>Subs, Raids &amp; Bits</h3>
-      <p class="small muted" style="margin-top:0">Fließen nicht in die Highlights ein. Einzeln aufgeführt: Gift-Bomben ab 5 Subs, Raids ab 10 Zuschauern, Cheers ab 500 Bits.</p>
+      <p class="small muted" style="margin-top:0">Fließen nicht in die Highlights ein. Einzeln aufgeführt: Gift-Bomben ab ${min.giftedSubs} Subs, Raids ab ${min.raidViewers} Zuschauern, Cheers ab ${min.bits} Bits.</p>
       <div class="summary-chips">
         <span class="chip">${s.subs} neue Subs</span>
         <span class="chip">${s.giftedSubs} verschenkte Subs</span>

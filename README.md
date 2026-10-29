@@ -62,13 +62,15 @@ schreibt das Ergebnis nach `output/<VOD-ID>/`:
 
 - `highlights.md`: Tabelle mit klickbaren Zeitstempeln, darunter separat
   Gift-Bomben ab 5 Subs, Raids ab 10 Zuschauern und Cheers ab 500 Bits
-  (plus Summen; Resubs werden weggelassen)
+  (plus Summen; Resubs werden weggelassen). Die Schwellen lassen sich in der
+  Oberfläche vor dem Start einstellen.
 - `highlights.json`: dieselben Daten für die nächsten Pipeline-Schritte
 - `chat.json`: der Chat, wird beim nächsten Lauf wiederverwendet
 
 Optionen: `--top 15` (mehr Chat-Treffer), `--bucket 20` (feinere Fenster),
 `--gap 60` (Highlights dürfen näher beieinander liegen), `--marker-lead 90`
-(mehr Vorlauf vor Streamer-Markern).
+(mehr Vorlauf vor Streamer-Markern), `--min-gifts 10 --min-raid 50 --min-bits 1000`
+(Schwellen für die Liste der Gift-Bomben, Raids und Cheers).
 
 Eine vorhandene Chat-Datei geht auch direkt: `npm run analyze -- chat.json`.
 

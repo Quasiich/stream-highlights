@@ -1,6 +1,6 @@
 import type { ChatLog } from "./chat.ts";
 import type { Highlight } from "./analyze.ts";
-import { describe, EVENT_MINIMUMS, isNotable, summarize, type StreamEvent } from "./events.ts";
+import { defaultEventMinimums, describe, type EventMinimums, isNotable, summarize, type StreamEvent } from "./events.ts";
 
 /** So viele Raids/Gift-Bomben/Cheers stehen höchstens in der Konsole, der Rest in highlights.md */
 const CONSOLE_EVENTS = 15;
@@ -30,11 +30,16 @@ function summaryLine(events: StreamEvent[]): string {
   return `${s.subs} neue Subs, ${s.giftedSubs} verschenkte Subs, ${s.raids} Raids, ${s.bits} Bits`;
 }
 
-function minimumsNote(): string {
-  return `Einzeln aufgeführt: Gift-Bomben ab ${EVENT_MINIMUMS.giftedSubs} Subs, Raids ab ${EVENT_MINIMUMS.raidViewers} Zuschauern, Cheers ab ${EVENT_MINIMUMS.bits} Bits.`;
+function minimumsNote(min: EventMinimums): string {
+  return `Einzeln aufgeführt: Gift-Bomben ab ${min.giftedSubs} Subs, Raids ab ${min.raidViewers} Zuschauern, Cheers ab ${min.bits} Bits.`;
 }
 
-export function toConsole(log: ChatLog, highlights: Highlight[], events: StreamEvent[] = []): string {
+export function toConsole(
+  log: ChatLog,
+  highlights: Highlight[],
+  events: StreamEvent[] = [],
+  min: EventMinimums = defaultEventMinimums,
+): string {
   const lines = [
     `${log.title ?? "VOD"}${log.channel ? ` (${log.channel})` : ""}`,
     `${log.messages.length} Chat-Nachrichten, ${clock(log.length ?? 0)} Länge`,
@@ -53,8 +58,8 @@ export function toConsole(log: ChatLog, highlights: Highlight[], events: StreamE
   }
 
   if (events.length) {
-    const notable = events.filter(isNotable);
-    lines.push("Subs, Raids & Bits (fließen nicht in die Highlights ein)", `    ${summaryLine(events)}`, `    ${minimumsNote()}`);
+    const notable = events.filter((e) => isNotable(e, min));
+    lines.push("Subs, Raids & Bits (fließen nicht in die Highlights ein)", `    ${summaryLine(events)}`, `    ${minimumsNote(min)}`);
     for (const e of notable.slice(0, CONSOLE_EVENTS)) lines.push(`    ${clock(e.offset).padStart(7)}  ${e.user}: ${describe(e)}`);
     if (notable.length > CONSOLE_EVENTS) lines.push(`    … ${notable.length - CONSOLE_EVENTS} weitere in highlights.md`);
     lines.push("");
@@ -62,7 +67,12 @@ export function toConsole(log: ChatLog, highlights: Highlight[], events: StreamE
   return lines.join("\n");
 }
 
-export function toMarkdown(log: ChatLog, highlights: Highlight[], events: StreamEvent[] = []): string {
+export function toMarkdown(
+  log: ChatLog,
+  highlights: Highlight[],
+  events: StreamEvent[] = [],
+  min: EventMinimums = defaultEventMinimums,
+): string {
   const cell = (s: string) => s.replace(/\|/g, "\\|");
   const rows = highlights.map(
     (h) =>
@@ -75,7 +85,7 @@ export function toMarkdown(log: ChatLog, highlights: Highlight[], events: Stream
     "|---|---|---|---|---|---|---|",
     ...rows,
     "",
-    ...eventsMarkdown(log, events),
+    ...eventsMarkdown(log, events, min),
   ].join("\n");
 }
 
@@ -86,11 +96,11 @@ function sourceLabel(h: Highlight): string {
   return h.markers.length ? `${label}: ${h.markers.join(" / ")}` : label;
 }
 
-function eventsMarkdown(log: ChatLog, events: StreamEvent[]): string[] {
+function eventsMarkdown(log: ChatLog, events: StreamEvent[], min: EventMinimums): string[] {
   if (events.length === 0) return [];
   const row = (e: StreamEvent) => `| [${clock(e.offset)}](${vodLink(log.videoId, e.offset)}) | ${e.user} | ${describe(e)} |`;
-  const notable = events.filter(isNotable);
-  const lines = ["## Subs, Raids & Bits", "", `Fließen nicht in die Highlights ein. ${minimumsNote()}`, "", `**${summaryLine(events)}**`, ""];
+  const notable = events.filter((e) => isNotable(e, min));
+  const lines = ["## Subs, Raids & Bits", "", `Fließen nicht in die Highlights ein. ${minimumsNote(min)}`, "", `**${summaryLine(events)}**`, ""];
   if (notable.length) {
     lines.push("| Zeit | Wer | Was |", "|---|---|---|", ...notable.map(row), "");
   }

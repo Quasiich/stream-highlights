@@ -172,6 +172,16 @@ test("isNotable listet nur Gift-Bomben ab 5, Raids ab 10 und Cheers ab 500", () 
   assert.equal(isNotable(ev("bits", 500)), true);
 });
 
+test("isNotable nimmt eigene Mindestwerte", () => {
+  const ev = (type: string, amount?: number) => ({ offset: 0, user: "a", type, amount });
+  const min = { giftedSubs: 1, raidViewers: 100, bits: 100 };
+  assert.equal(isNotable(ev("submysterygift", 1), min), true);
+  assert.equal(isNotable(ev("raid", 99), min), false);
+  assert.equal(isNotable(ev("raid", 100), min), true);
+  assert.equal(isNotable(ev("bits", 100), min), true);
+  assert.equal(isNotable(ev("raid"), min), true, "Raid ohne Zuschauerzahl bleibt sichtbar");
+});
+
 test("Subs erzeugen kein Highlight", () => {
   const raw = syntheticChat();
   for (let i = 0; i < 150; i++) {
