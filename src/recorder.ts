@@ -105,11 +105,24 @@ export function fromNotification(e: any, offset: number): ChatMessage | undefine
   return { offset, user, text, emotes: [], event, ...(amount !== undefined ? { amount } : {}) };
 }
 
+/** Was der Mitschnitt gerade tut, für die Oberfläche */
+export interface RecorderStatus {
+  /** waiting: kein Stream, recording: schneidet mit, ending: offline, Wartezeit läuft, analyzing: wertet aus */
+  state: "waiting" | "recording" | "ending" | "analyzing";
+  stream?: { id: string; startedAt: string; messages: number };
+  /** Wann die Auswertung startet (ISO), solange state "ending" ist */
+  analyzeAt?: string;
+}
+
 interface Capture {
   meta: CaptureMeta;
   out: WriteStream;
+  /** Bisher mitgeschriebene Nachrichten */
+  messages: number;
   /** Nach stream.offline: keine Nachrichten mehr, Auswertung nach Ablauf von `timer` */
   timer?: ReturnType<typeof setTimeout>;
+  /** Wann `timer` abläuft (ms) */
+  analyzeAt?: number;
   /** Seit wann (Sekunden) die Verbindung fehlt */
   gapFrom?: number;
 }
@@ -152,10 +165,21 @@ export class LiveRecorder {
         if (!c || c.timer) return;
         const offset = secondsBetween(c.meta.startedAt, timestamp);
         const msg = type === "channel.chat.message" ? fromChatMessage(event, offset) : fromNotification(event, offset);
-        if (msg) c.out.write(`${JSON.stringify(msg)}\n`);
+        if (msg) {
+          c.out.write(`${JSON.stringify(msg)}\n`);
+          c.messages++;
+        }
         return;
       }
     }
+  }
+
+  status(): RecorderStatus {
+    const c = this.current;
+    const stream = c && { id: c.meta.streamId, startedAt: c.meta.startedAt, messages: c.messages };
+    if (c?.timer) return { state: "ending", stream, analyzeAt: new Date(c.analyzeAt!).toISOString() };
+    if (c) return { state: "recording", stream };
+    return { state: this.finalizing.size ? "analyzing" : "waiting" };
   }
 
   /** Verbindung zu EventSub verloren */
@@ -209,7 +233,7 @@ export class LiveRecorder {
       if (c.timer) {
         this.opts.log("Stream läuft weiter, Auswertung abgebrochen.");
         clearTimeout(c.timer);
-        c.timer = undefined;
+        c.timer = c.analyzeAt = undefined;
         delete c.meta.endedAt;
       }
       if (c.gapFrom !== undefined) {
@@ -231,19 +255,21 @@ export class LiveRecorder {
     const metaPath = join(this.liveDir, `${stream.id}.json`);
     const chatPath = join(this.liveDir, `${stream.id}.jsonl`);
     let meta: CaptureMeta;
+    let count = 0;
     if (existsSync(metaPath)) {
       // Nach einem Neustart: weiterschreiben, die Zeit dazwischen fehlt.
       meta = JSON.parse(await readFile(metaPath, "utf8"));
       delete meta.endedAt;
       const messages = existsSync(chatPath) ? await readMessages(chatPath) : [];
       meta.gaps.push({ from: messages.at(-1)?.offset ?? 0, to: nowOffset });
+      count = messages.length;
       this.opts.log(`Setze Mitschnitt von Stream ${stream.id} fort.`);
     } else {
       meta = { streamId: stream.id, startedAt: stream.startedAt, channel: this.channel, gaps: [] };
       if (nowOffset > LATE_START_SECONDS) meta.gaps.push({ from: 0, to: nowOffset });
       this.opts.log(`Stream ${stream.id} läuft, schneide den Chat mit.`);
     }
-    this.current = { meta, out: createWriteStream(chatPath, { flags: "a" }) };
+    this.current = { meta, out: createWriteStream(chatPath, { flags: "a" }), messages: count };
     await this.saveMeta(meta);
   }
 
@@ -254,6 +280,7 @@ export class LiveRecorder {
     await this.saveMeta(c.meta);
     const minutes = Math.round(this.opts.graceMs / 60000);
     this.opts.log(`Stream ${c.meta.streamId} ist offline. Auswertung in ${minutes} min, falls er nicht weiterläuft.`);
+    c.analyzeAt = this.now() + this.opts.graceMs;
     c.timer = setTimeout(
       () =>
         this.serial(async () => {

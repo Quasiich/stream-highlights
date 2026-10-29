@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import * as sea from "node:sea";
-import { openUrl, PORT, readHtmlFromDisk, startServer } from "./server.ts";
+import { openUrl, PORT, readHtmlFromDisk, restoreLive, shutdownLive, startServer } from "./server.ts";
 
 /**
  * Startpunkt der Web-Oberfläche, sowohl für `npm start` als auch für die
@@ -32,6 +32,12 @@ async function main() {
   console.log(`Oberfläche: ${url}`);
   console.log("Dieses Fenster offen lassen. Schließen beendet das Programm.");
   if (!process.argv.includes("--no-open")) openUrl(url);
+
+  // Live-Mitschnitt sauber schließen; SIGHUP kommt unter Windows beim Schließen des Fensters.
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => void shutdownLive().finally(() => process.exit(0)));
+  }
+  await restoreLive();
 }
 
 main().catch((err) => {

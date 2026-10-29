@@ -1,14 +1,23 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { defaultOptions } from "./analyze.ts";
+import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
+import { type LiveService, startLive } from "./livemode.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
+import { defaultRecorderOptions } from "./recorder.ts";
 import { findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 
 export const PORT = 4777;
+/** Einstellungen, die einen Neustart überdauern (im Programmordner) */
+export const SETTINGS_FILE = "settings.json";
+
+interface Settings {
+  /** Live-Mitschnitt beim Start einschalten, mit diesen Analyse-Einstellungen */
+  live?: { enabled: boolean; options?: Record<string, unknown> };
+}
 
 interface Job {
   id: string;
@@ -20,6 +29,18 @@ interface Job {
 }
 
 let job: Job | undefined;
+/** Live-Mitschnitt in diesem Prozess, siehe setLive() */
+const live: {
+  enabled: boolean;
+  options?: Record<string, unknown>;
+  service?: LiveService;
+  starting?: boolean;
+  error?: string;
+  retry?: ReturnType<typeof setTimeout>;
+} = { enabled: false };
+/** Neuer Versuch, wenn der Live-Mitschnitt nicht starten konnte (z. B. kein Internet beim Hochfahren) */
+const LIVE_RETRY_MS = 60_000;
+
 let login: { state: "idle" | "pending" | "done" | "error"; userCode?: string; verificationUri?: string; error?: string } = {
   state: "idle",
 };
@@ -111,18 +132,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     const body = await readJson(req);
     const input = String(body.input ?? "").trim();
     if (!parseVideoId(input)) return send(res, 400, { error: "Bitte einen VOD-Link oder eine VOD-ID angeben, z. B. https://www.twitch.tv/videos/2912392719" });
-    const opts = {
-      ...defaultOptions,
-      top: num(body.top, defaultOptions.top),
-      bucketSeconds: num(body.bucket, defaultOptions.bucketSeconds),
-      minGapSeconds: num(body.gap, defaultOptions.minGapSeconds),
-      markerLeadSeconds: num(body.markerLead, defaultOptions.markerLeadSeconds),
-      eventMinimums: {
-        giftedSubs: num(body.minGifts, defaultOptions.eventMinimums.giftedSubs),
-        raidViewers: num(body.minRaid, defaultOptions.eventMinimums.raidViewers),
-        bits: num(body.minBits, defaultOptions.eventMinimums.bits),
-      },
-    };
+    const opts = analyzeOptions(body);
     if (body.refresh) await rm(join(OUTPUT_DIR, parseVideoId(input)!, "chat.json"), { force: true });
 
     const current: Job = { id: Date.now().toString(36), input, messages: [], listeners: new Set(), finished: false };
@@ -155,6 +165,19 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return;
   }
 
+  if (path === "/api/live" && req.method === "GET") return send(res, 200, liveStatus());
+
+  if (path === "/api/live" && req.method === "POST") {
+    const body = await readJson(req);
+    if (body.enabled && !existsSync(AUTH_FILE)) return send(res, 400, { error: "Bitte zuerst mit Twitch verbinden." });
+    try {
+      await setLive(Boolean(body.enabled), body.options && typeof body.options === "object" ? body.options : undefined);
+    } catch (err: any) {
+      return send(res, 400, { error: err.message });
+    }
+    return send(res, 200, liveStatus());
+  }
+
   if (path === "/api/login" && req.method === "GET") return send(res, 200, login);
 
   if (path === "/api/login" && req.method === "POST") {
@@ -162,7 +185,11 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     const pending = await startLogin(resolveClientId(String(body.clientId ?? "")));
     login = { state: "pending", userCode: pending.userCode, verificationUri: pending.verificationUri };
     pending.done.then(
-      () => (login = { state: "done" }),
+      () => {
+        login = { state: "done" };
+        // Mit der neuen Anmeldung (z. B. jetzt mit Chat-Scope) neu starten
+        if (live.enabled) void restartLive();
+      },
       (err) => (login = { state: "error", error: err.message }),
     );
     openUrl(pending.verificationUri);
@@ -170,6 +197,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   }
 
   if (path === "/api/logout" && req.method === "POST") {
+    await stopLive("Nicht mit Twitch verbunden.");
     await rm(AUTH_FILE, { force: true });
     login = { state: "idle" };
     return send(res, 200, { ok: true });
@@ -184,6 +212,105 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   }
 
   send(res, 404, { error: "Nicht gefunden" });
+}
+
+function analyzeOptions(body: any): AnalyzeOptions {
+  return {
+    ...defaultOptions,
+    top: num(body.top, defaultOptions.top),
+    bucketSeconds: num(body.bucket, defaultOptions.bucketSeconds),
+    minGapSeconds: num(body.gap, defaultOptions.minGapSeconds),
+    markerLeadSeconds: num(body.markerLead, defaultOptions.markerLeadSeconds),
+    eventMinimums: {
+      giftedSubs: num(body.minGifts, defaultOptions.eventMinimums.giftedSubs),
+      raidViewers: num(body.minRaid, defaultOptions.eventMinimums.raidViewers),
+      bits: num(body.minBits, defaultOptions.eventMinimums.bits),
+    },
+  };
+}
+
+// ---- Live-Mitschnitt ------------------------------------------------------
+
+async function loadSettings(): Promise<Settings> {
+  try {
+    return JSON.parse(await readFile(SETTINGS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function liveStatus() {
+  if (live.service) return { enabled: true, ...live.service.status() };
+  const state = !live.enabled ? "off" : live.starting ? "connecting" : "error";
+  return { enabled: live.enabled, state, message: live.error, connected: false, log: [] };
+}
+
+/**
+ * Schaltet den Live-Mitschnitt ein oder aus und merkt sich das für den
+ * nächsten Start. Wirft beim Einschalten, wenn er nicht starten kann.
+ */
+async function setLive(enabled: boolean, options?: Record<string, unknown>): Promise<void> {
+  if (!enabled) {
+    live.enabled = false;
+    await stopLive();
+    live.error = undefined;
+  } else {
+    live.enabled = true;
+    live.options = options ?? live.options;
+    try {
+      await restartLive(true);
+    } catch (err) {
+      live.enabled = false;
+      throw err;
+    }
+  }
+  const settings = await loadSettings();
+  settings.live = { enabled: live.enabled, options: live.options };
+  await writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+async function stopLive(error?: string) {
+  clearTimeout(live.retry);
+  const service = live.service;
+  live.service = undefined;
+  live.error = error;
+  await service?.stop();
+}
+
+/** (Neu) starten. Ohne `throwErrors` wird es nach einem Fehler später erneut versucht. */
+async function restartLive(throwErrors = false): Promise<void> {
+  await stopLive();
+  live.starting = true;
+  try {
+    live.service = await startLive({
+      ...defaultRecorderOptions(OUTPUT_DIR, analyzeOptions(live.options ?? {})),
+      onFatal: (message) => {
+        live.service = undefined;
+        live.error = message;
+      },
+    });
+  } catch (err: any) {
+    live.error = err.message;
+    if (throwErrors) throw err;
+    if (live.enabled && existsSync(AUTH_FILE)) live.retry = setTimeout(() => void restartLive(), LIVE_RETRY_MS);
+  } finally {
+    live.starting = false;
+  }
+}
+
+/** Beim Programmstart: Live-Mitschnitt wieder einschalten, falls er zuletzt an war. */
+export async function restoreLive(): Promise<void> {
+  const settings = await loadSettings();
+  if (!settings.live?.enabled) return;
+  live.enabled = true;
+  live.options = settings.live.options;
+  await restartLive();
+  console.log(live.service ? "Live-Mitschnitt ist eingeschaltet." : `Live-Mitschnitt konnte nicht starten: ${live.error}`);
+}
+
+/** Beim Beenden den Mitschnitt sauber schließen, er wird beim nächsten Start fortgesetzt. */
+export function shutdownLive(): Promise<void> {
+  return stopLive();
 }
 
 function send(res: ServerResponse, status: number, body: unknown) {

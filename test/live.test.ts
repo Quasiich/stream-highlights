@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { defaultOptions } from "../src/analyze.ts";
 import { loadChat } from "../src/chat.ts";
 import { connectEventSub, type SocketLike } from "../src/eventsub.ts";
+import { startLive } from "../src/livemode.ts";
 import type { AnalysisResult } from "../src/pipeline.ts";
 import { type CaptureMeta, fromChatMessage, fromNotification, LiveRecorder, type RecorderOptions } from "../src/recorder.ts";
 
@@ -212,4 +213,43 @@ test("LiveRecorder vermerkt verspäteten Start und wertet liegen gebliebene Mits
   const meta: CaptureMeta = JSON.parse(await readFile(join(opts.outDir, "live", "901.json"), "utf8"));
   assert.deepEqual(meta.gaps, [{ from: 0, to: 300 }]);
   await rec.stop();
+});
+
+test("startLive abonniert die vier Ereignisse und meldet den Status, ohne Chat-Scope gibt es eine klare Fehlermeldung", async (t) => {
+  const { opts } = await setup(t);
+  let scopes = ["user:read:broadcast"];
+  const subscriptions: any[] = [];
+  t.mock.method(globalThis, "fetch", async (input: any, init: any = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/oauth2/validate") return Response.json({ user_id: "42", login: "streamer", scopes, expires_in: 9000 });
+    if (url.pathname === "/helix/eventsub/subscriptions") {
+      subscriptions.push(JSON.parse(init.body));
+      return Response.json({ data: [] }, { status: 202 });
+    }
+    if (url.pathname === "/helix/streams") return Response.json({ data: [] });
+    return new Response("{}", { status: 404 });
+  });
+
+  await assert.rejects(startLive({ ...opts, createSocket: (u) => new FakeSocket(u) }), /Chat noch nicht lesen/);
+
+  scopes = ["user:read:broadcast", "user:read:chat"];
+  FakeSocket.all = [];
+  const service = await startLive({ ...opts, createSocket: (u) => new FakeSocket(u) });
+  assert.equal(service.status().state, "connecting");
+  FakeSocket.all[0].welcome("s1");
+  for (let i = 0; i < 20 && service.status().state !== "waiting"; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(
+    subscriptions.map((s) => [s.type, s.transport.session_id, s.condition.user_id]),
+    [
+      ["stream.online", "s1", undefined],
+      ["stream.offline", "s1", undefined],
+      ["channel.chat.message", "s1", "42"],
+      ["channel.chat.notification", "s1", "42"],
+    ],
+  );
+  const status = service.status();
+  assert.equal(status.state, "waiting");
+  assert.equal(status.connected, true);
+  assert.equal(status.channel, "streamer");
+  await service.stop();
 });

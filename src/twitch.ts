@@ -151,14 +151,33 @@ async function validate(accessToken: string): Promise<Validation> {
   return res.ok ? ((await res.json()) as any) : {};
 }
 
-/** Holt ein neues Access-Token (gilt 4 Stunden). Refresh-Tokens sind nur einmal verwendbar. */
-async function refresh(auth: TwitchAuth): Promise<TwitchAuth> {
+/** Laufende Erneuerungen je Refresh-Token, siehe refresh() */
+const refreshing = new Map<string, Promise<TwitchAuth>>();
+
+/**
+ * Holt ein neues Access-Token (gilt 4 Stunden). Refresh-Tokens sind nur
+ * einmal verwendbar: Wollen Oberfläche und Live-Mitschnitt gleichzeitig
+ * erneuern, teilen sie sich eine Anfrage. Hat ein anderer Teil das Token
+ * schon erneuert und gespeichert, wird die gespeicherte Anmeldung genommen.
+ */
+function refresh(auth: TwitchAuth, authPath: string): Promise<TwitchAuth> {
+  let pending = refreshing.get(auth.refreshToken);
+  if (!pending) {
+    pending = requestRefresh(auth, authPath).finally(() => refreshing.delete(auth.refreshToken));
+    refreshing.set(auth.refreshToken, pending);
+  }
+  return pending;
+}
+
+async function requestRefresh(auth: TwitchAuth, authPath: string): Promise<TwitchAuth> {
   const res = await postForm(TOKEN_URL, {
     client_id: auth.clientId,
     grant_type: "refresh_token",
     refresh_token: auth.refreshToken,
   });
   if (!res.ok) {
+    const saved = await loadAuth(authPath).catch(() => undefined);
+    if (saved && saved.refreshToken !== auth.refreshToken) return saved;
     throw new Error("Die Twitch-Anmeldung ist abgelaufen. Bitte erneut verbinden („Mit Twitch verbinden“ bzw. `npm run login`).");
   }
   return { ...auth, accessToken: res.body.access_token, refreshToken: res.body.refresh_token ?? auth.refreshToken };
@@ -225,7 +244,7 @@ export async function fetchVods(first: number, after?: string, authPath = AUTH_F
 async function whoAmI(auth: TwitchAuth, authPath: string): Promise<Pick<TwitchAuth, "accessToken" | "refreshToken" | "login" | "userId">> {
   let who = await validate(auth.accessToken);
   if (!who.user_id) {
-    auth = await refresh(auth);
+    auth = await refresh(auth, authPath);
     await saveAuth(auth, authPath);
     who = await validate(auth.accessToken);
   }
@@ -243,7 +262,7 @@ export async function checkAuth(authPath = AUTH_FILE): Promise<TwitchAuth & { sc
   if (!auth) throw new Error("Nicht mit Twitch verbunden. Bitte zuerst `npm run login` ausführen.");
   let who = await validate(auth.accessToken);
   if (!who.user_id || (who.expires_in ?? 0) < 3600) {
-    auth = await refresh(auth);
+    auth = await refresh(auth, authPath);
     who = await validate(auth.accessToken);
     if (!who.user_id) throw new Error("Twitch-Anmeldung ungültig. Bitte erneut verbinden (`npm run login`).");
     auth = { ...auth, login: who.login, userId: who.user_id };
@@ -307,7 +326,7 @@ async function helix(url: URL, authPath: string, body?: unknown): Promise<{ res:
     fetch(url, body === undefined ? { headers: headers(a) } : { method: "POST", headers: headers(a), body: JSON.stringify(body) });
   let res = await get(auth);
   if (res.status === 401) {
-    auth = await refresh(auth);
+    auth = await refresh(auth, authPath);
     await saveAuth(auth, authPath);
     res = await get(auth);
   }

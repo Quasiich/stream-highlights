@@ -174,6 +174,11 @@
   .code { font: 700 30px/1 ui-monospace, Consolas, monospace; letter-spacing: .12em; text-align: center; padding: 16px; background: var(--panel-2); border-radius: 8px; margin: 12px 0; }
   .dialog-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
   .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
+  .dot.rec { background: var(--error); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .live-state { display: flex; gap: 8px; align-items: baseline; font-size: 14px; margin-top: 10px; }
+  .live-state .dot { flex: none; transform: translateY(-1px); }
+  .live-log { font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; background: var(--panel-2); border-radius: 8px; padding: 8px; margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -203,6 +208,19 @@
       <div id="paneHistory" role="tabpanel" aria-labelledby="tabHistory">
         <ul class="history" id="history"><li class="muted small">Noch keine.</li></ul>
       </div>
+    </div>
+    <div class="panel" id="livePanel">
+      <h2>Live-Mitschnitt</h2>
+      <label class="check small"><input type="checkbox" id="liveToggle"> Chat meiner Streams automatisch mitschreiben</label>
+      <div class="live-state hidden" id="liveState"><span class="dot" id="liveDot"></span><span id="liveText"></span></div>
+      <p class="side-note" id="liveInfo">
+        Optional. Solange dieses Programm läuft, schreibt es den Chat deiner Streams mit und analysiert ihn direkt nach
+        dem Stream-Ende, ganz ohne Chat-Download. Der PC muss dafür während des Streams laufen.
+        <span id="liveNeedsLogin" class="hidden"><br>Dafür zuerst mit Twitch verbinden.</span>
+      </p>
+      <div id="liveLast" class="side-note hidden"></div>
+      <div id="liveError" class="error-box hidden small" role="alert"></div>
+      <details id="liveLogBox" class="hidden"><summary>Protokoll</summary><pre class="live-log" id="liveLog"></pre></details>
     </div>
   </aside>
 
@@ -256,7 +274,7 @@
   <div id="loginSetup">
     <h2>Mit Twitch verbinden</h2>
     <p class="small">Damit werden die Stream-Marker berücksichtigt, die du während des Streams per Hotkey setzt, und unter „Deine VODs“ erscheinen deine letzten Streams.</p>
-    <p class="small muted">Nach „Verbinden“ öffnet sich twitch.tv/activate. Melde dich dort mit dem Konto deines Kanals an und bestätige den Code, der hier angezeigt wird. Das Programm kann damit nur deine Kanal-Einstellungen und Marker lesen, nichts ändern.</p>
+    <p class="small muted">Nach „Verbinden“ öffnet sich twitch.tv/activate. Melde dich dort mit dem Konto deines Kanals an und bestätige den Code, der hier angezeigt wird. Das Programm kann damit nur deine Kanal-Einstellungen, Marker und (für den Live-Mitschnitt) deinen Chat lesen, nichts ändern oder schreiben.</p>
     <details id="customApp">
       <summary>Eigene Twitch-App verwenden (optional)</summary>
       <p class="small muted">Nur nötig, wenn du statt der App von stream-highlights eine eigene nutzen willst. Feld leer lassen für die Standard-App.</p>
@@ -359,9 +377,10 @@ $("resetThresholds").addEventListener("click", () => {
 
 $("twitchBtn").addEventListener("click", async () => {
   if (status?.twitch) {
-    if (!confirm("Twitch-Verbindung trennen? Stream-Marker werden dann nicht mehr berücksichtigt.")) return;
+    if (!confirm("Twitch-Verbindung trennen? Stream-Marker werden dann nicht mehr berücksichtigt und der Live-Mitschnitt pausiert.")) return;
     await api("/api/logout", { method: "POST" });
     await refreshStatus();
+    await refreshLive();
     resetVods();
     return;
   }
@@ -401,6 +420,7 @@ async function pollLogin() {
   if (login.state === "pending") return setTimeout(pollLogin, 2000);
   if (login.state === "done") {
     await refreshStatus();
+    refreshLive().catch(() => {});
     resetVods();
     selectTab("vods");
     $("loginStatus").textContent = "Verbunden als " + (status.twitch?.login || "?") + ". Du kannst das Fenster schließen.";
@@ -706,9 +726,74 @@ function playHighlight(videoId, h, row) {
   $("playerCaption").innerHTML = `#${h.rank}: ${clock(h.start)} – ${clock(h.end)} · <a href="${vodUrl(videoId, h.start)}" target="_blank" rel="noopener">auf Twitch öffnen</a>`;
 }
 
+// ---- Live-Mitschnitt ------------------------------------------------------
+let lastLiveResult;
+/** Fehler beim Einschalten, bleibt stehen bis zum nächsten Klick */
+let liveToggleError = "";
+const timeOfDay = (iso) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+function liveText(live) {
+  switch (live.state) {
+    case "connecting": return "Verbinde mit Twitch …";
+    case "disconnected": return "Verbindung zu Twitch unterbrochen, verbinde neu …";
+    case "waiting": return "Bereit, wartet auf deinen nächsten Stream" + (live.channel ? " (" + live.channel + ")" : "") + ".";
+    case "recording":
+      return "Stream läuft seit " + timeOfDay(live.stream.startedAt) + " Uhr, " + live.stream.messages.toLocaleString("de-DE") + " Nachrichten mitgeschrieben." +
+        (live.connected ? "" : " Verbindung unterbrochen, verbinde neu …");
+    case "ending": return "Stream ist offline. Auswertung um " + timeOfDay(live.analyzeAt) + " Uhr, falls er nicht weiterläuft.";
+    case "analyzing": return "Werte den Stream aus …";
+    default: return "";
+  }
+}
+async function refreshLive() {
+  const live = await api("/api/live");
+  $("liveToggle").checked = live.enabled;
+  $("liveToggle").disabled = !status?.twitch && !live.enabled;
+  $("liveInfo").classList.toggle("hidden", live.enabled);
+  $("liveNeedsLogin").classList.toggle("hidden", Boolean(status?.twitch));
+  const text = liveText(live);
+  $("liveState").classList.toggle("hidden", !text);
+  $("liveText").textContent = text;
+  $("liveDot").className = "dot" + (live.state === "recording" ? " rec" : live.connected ? " on" : "");
+  const error = live.state === "error" ? live.message || "Live-Mitschnitt läuft nicht." : live.enabled ? "" : liveToggleError;
+  $("liveError").textContent = error;
+  $("liveError").classList.toggle("hidden", !error);
+  $("liveLogBox").classList.toggle("hidden", !live.log.length);
+  $("liveLog").textContent = live.log.slice().reverse().join("\n");
+  const last = live.last;
+  $("liveLast").classList.toggle("hidden", !last);
+  if (last) {
+    $("liveLast").innerHTML = `Zuletzt ausgewertet: <a href="#" id="liveLastLink">${esc(last.title || last.id)}</a>, ${last.highlights} Highlights`;
+    $("liveLastLink").addEventListener("click", (e) => {
+      e.preventDefault();
+      showReport(last.id);
+    });
+    // Neue Auswertung im Hintergrund: Liste aktualisieren
+    if (lastLiveResult !== undefined && lastLiveResult !== last.at) {
+      markAnalyzed(last.id);
+      await loadHistory();
+    }
+  }
+  lastLiveResult = last?.at ?? null;
+}
+$("liveToggle").addEventListener("change", async () => {
+  const enabled = $("liveToggle").checked;
+  $("liveToggle").disabled = true;
+  liveToggleError = "";
+  try {
+    // Die aktuellen Einstellungen gelten auch für die automatischen Auswertungen
+    const options = { top: $("optTop").value, gap: $("optGap").value, bucket: $("optBucket").value, markerLead: $("optMarkerLead").value, ...readThresholds() };
+    await api("/api/live", { method: "POST", body: { enabled, options } });
+  } catch (err) {
+    liveToggleError = err.message;
+  }
+  await refreshLive();
+});
+setInterval(() => refreshLive().catch(() => {}), 5000);
+
 // ---- Start --------------------------------------------------------------
 (async () => {
   await refreshStatus();
+  await refreshLive();
   selectTab(status.twitch ? "vods" : "history");
   const reports = await loadHistory();
   if (status.running) {

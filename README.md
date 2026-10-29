@@ -31,6 +31,10 @@ schon analysiertes VOD (✓ Analysiert) öffnet das Ergebnis, bei allen anderen
 landet der Link im Eingabefeld, sodass du vor dem Start noch die
 Einstellungen anpassen kannst.
 
+Optional kann das Programm den Chat auch während deiner Streams mitschreiben
+und direkt nach dem Stream auswerten, siehe
+[Live-Mitschnitt](#live-mitschnitt-optional).
+
 Die Datei ist nicht signiert, deshalb kann Windows beim ersten Start „Der
 Computer wurde durch Windows geschützt“ anzeigen. Dann auf „Weitere
 Informationen“ → „Trotzdem ausführen“ klicken.
@@ -102,7 +106,7 @@ Ohne Oberfläche geht dasselbe im Projektordner mit `npm run login`.
 
 Das Programm bekommt dabei nur Leserechte: `user:read:broadcast` für deine
 Stream-Marker und Kanal-Einstellungen, `user:read:chat` für den
-[Live-Mitschnitt](#automatisch-auf-einem-server-live-mitschnitt) deines
+[Live-Mitschnitt](#live-mitschnitt-optional) deines
 Chats. Es kann nichts ändern und nichts in den Chat schreiben. Die
 Anmeldung landet in `.twitch-auth.json` im Programmordner. Die Datei wird
 nicht auf GitHub hochgeladen. Gib sie auch sonst nicht weiter. Das Programm
@@ -155,50 +159,71 @@ später in der Highlight-Liste.
 - Ohne Anmeldung, oder bei VODs anderer Kanäle (Twitch gibt Marker nur an den
   eigenen Kanal heraus), läuft alles wie gewohnt nur mit dem Chat.
 
-## Automatisch auf einem Server (Live-Mitschnitt)
+## Live-Mitschnitt (optional)
 
-Statt den Chat nach dem Stream herunterzuladen, kann stream-highlights
-dauerhaft auf einem Server (z. B. einem VPS) laufen, den Chat während des
-Streams über den offiziellen Weg von Twitch
-([EventSub](https://dev.twitch.tv/docs/eventsub/)) mitschreiben und nach dem
-Stream-Ende selbst auswerten:
+Statt den Chat nach dem Stream herunterzuladen, kann stream-highlights ihn
+während deines Streams über den offiziellen Weg von Twitch
+([EventSub](https://dev.twitch.tv/docs/eventsub/)) mitschreiben und direkt
+nach dem Stream-Ende selbst auswerten. Das ist eine Zusatzfunktion: Die
+Auswertung selbst ist dieselbe wie beim Analysieren eines VODs, und wer den
+Mitschnitt nicht einschaltet, merkt davon nichts.
 
-```
-npm run live
-```
+Es gibt zwei Wege, je nachdem, wo das Programm laufen soll:
+
+- **Auf deinem PC (stream-highlights.exe):** In der Oberfläche links unter
+  **Live-Mitschnitt** den Haken setzen. Dafür musst du mit Twitch verbunden
+  sein. Der Mitschnitt läuft, solange das Programm offen ist, also am besten
+  vor dem Stream starten und erst nach der Auswertung schließen. Die
+  Einstellung wird gemerkt (`settings.json` im Programmordner) und gilt beim
+  nächsten Start wieder. Die Schwellen und erweiterten Einstellungen, die beim
+  Einschalten eingetragen sind, gelten auch für die automatischen
+  Auswertungen.
+- **Auf einem Server (z. B. VPS), ohne dass dein PC laufen muss:**
+  `npm run live`, siehe [unten](#auf-einem-server).
 
 Ablauf:
 
 - Geht dein Kanal live (`stream.online`), landet jede Chat-Nachricht sowie
   jeder Sub, Raid und Cheer laufend in `output/live/<Stream-ID>.jsonl`.
-- Nach dem Stream-Ende (`stream.offline`) wartet das Programm 10 Minuten
-  (`--grace`), falls der Stream nur kurz abgebrochen ist. Geht er in der Zeit
-  weiter, wird einfach weitergeschrieben.
+- Nach dem Stream-Ende (`stream.offline`) wartet das Programm 10 Minuten,
+  falls der Stream nur kurz abgebrochen ist. Geht er in der Zeit weiter, wird
+  einfach weitergeschrieben.
 - Danach sucht es das VOD zum Stream, schreibt den Chat nach
   `output/<VOD-ID>/chat.json` und analysiert wie gewohnt, inklusive
-  Streamer-Markern. Ohne gespeichertes VOD heißt der Ordner wie die Stream-ID.
-- Wird das Programm mitten im Stream neu gestartet oder verliert es die
-  Verbindung, setzt es den Mitschnitt fort. Fehlen dadurch insgesamt mehr als
-  2 Minuten (`--max-gap`), lädt es nach dem Stream stattdessen den
-  vollständigen Chat per TwitchDownloaderCLI (unter Linux x64 ebenfalls
-  automatisch). Endete ein Stream, während das Programm nicht lief, wird der
-  Mitschnitt beim nächsten Start ausgewertet.
+  Streamer-Markern. Das Ergebnis erscheint unter „Analysen“. Ohne
+  gespeichertes VOD heißt der Ordner wie die Stream-ID.
+- Wird das Programm mitten im Stream geschlossen und wieder gestartet oder
+  verliert es die Verbindung, setzt es den Mitschnitt fort. Fehlen dadurch
+  insgesamt mehr als 2 Minuten, lädt es nach dem Stream stattdessen den
+  vollständigen Chat per TwitchDownloaderCLI. Endete ein Stream, während das
+  Programm nicht lief, wird der Mitschnitt beim nächsten Start ausgewertet.
 
-Voraussetzungen: Node.js 26, `npm install`, und einmal `npm run login` im
-Projektordner auf dem Server. Die Anmeldung per Gerätecode klappt auch ohne
-Browser auf dem Server: Code am eigenen Rechner auf twitch.tv/activate
-eingeben. Wer sich vor Einführung des Live-Mitschnitts angemeldet hat,
-muss sich einmal neu anmelden, damit der Chat-Scope dazukommt;
-`npm run live` sagt dann Bescheid.
+Der Mitschnitt braucht das Recht `user:read:chat`. Wer sich vor Einführung
+des Live-Mitschnitts mit Twitch verbunden hat, muss einmal trennen und neu
+verbinden; das Programm sagt dann Bescheid.
 
-Hinweis: Erneuert ein Programm das Twitch-Token, wird das alte ungültig.
-Deshalb nicht dieselbe `.twitch-auth.json` gleichzeitig auf dem Server und
-am PC verwenden, sondern auf beiden getrennt anmelden.
+Erneuert ein Programm das Twitch-Token, wird das alte ungültig. Deshalb nicht
+dieselbe `.twitch-auth.json` gleichzeitig auf dem Server und am PC verwenden,
+sondern auf beiden getrennt anmelden. Den Mitschnitt nur an einer Stelle
+einschalten, sonst wird jeder Stream doppelt ausgewertet.
 
-### Als Dienst einrichten (systemd)
+### Auf einem Server
 
-Eine Vorlage liegt in `deploy/stream-highlights-live.service`. Pfad
-(`/opt/stream-highlights`) und Benutzer (`streamhl`) anpassen, dann:
+Voraussetzungen: Node.js 26, `npm install` und einmal `npm run login` im
+Projektordner. Die Anmeldung per Gerätecode klappt auch ohne Browser auf dem
+Server: Code am eigenen Rechner auf twitch.tv/activate eingeben. Dann:
+
+```
+npm run live
+```
+
+Optionen: `--grace 5` (Wartezeit nach Stream-Ende in Minuten), `--max-gap 300`
+(ab wie vielen fehlenden Sekunden der Chat komplett geladen wird, `0` = nie),
+`--out <ordner>`.
+
+Als Dienst (systemd): Eine Vorlage liegt in
+`deploy/stream-highlights-live.service`. Pfad (`/opt/stream-highlights`) und
+Benutzer (`streamhl`) anpassen, dann:
 
 ```
 sudo cp deploy/stream-highlights-live.service /etc/systemd/system/

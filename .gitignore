@@ -6,3 +6,4 @@ dist/
 # Legt TwitchDownloaderCLI bei jedem Lauf im Arbeitsordner ab
 COPYRIGHT.txt
 THIRD-PARTY-LICENSES.txt
+settings.json
