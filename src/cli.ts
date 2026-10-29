@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadChat } from "./chat.ts";
 import { defaultOptions, findHighlights } from "./analyze.ts";
+import { collectEvents, isNotable, summarize } from "./events.ts";
 import { toConsole, toMarkdown } from "./format.ts";
 
 const usage = `Verwendung:
@@ -55,12 +56,17 @@ async function main() {
     minGapSeconds: num(values.gap, defaultOptions.minGapSeconds),
   });
 
-  console.log(toConsole(log, highlights));
+  const events = collectEvents(log);
+
+  console.log(toConsole(log, highlights, events));
 
   const dir = join(values.out!, log.videoId ?? "local");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "highlights.json"), JSON.stringify({ video: { id: log.videoId, title: log.title, channel: log.channel, length: log.length }, highlights }, null, 2));
-  await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights));
+  await writeFile(
+    join(dir, "highlights.json"),
+    JSON.stringify({ video: { id: log.videoId, title: log.title, channel: log.channel, length: log.length }, highlights, events: { summary: summarize(events), list: events.filter(isNotable) } }, null, 2),
+  );
+  await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events));
   console.log(`Gespeichert: ${join(dir, "highlights.json")} und highlights.md`);
 }
 

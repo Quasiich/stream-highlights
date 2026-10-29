@@ -8,8 +8,10 @@ export interface ChatMessage {
   text: string;
   /** Namen der Twitch-/7TV-/BTTV-Emotes in der Nachricht */
   emotes: string[];
-  /** z. B. "sub", "resub", "subgift", "raid", "bits" */
+  /** z. B. "sub", "resub", "subgift", "submysterygift", "raid", "bits" */
   event?: string;
+  /** Monate (resub), Anzahl Subs (submysterygift), Zuschauer (raid) oder Bits */
+  amount?: number;
 }
 
 export interface ChatLog {
@@ -45,7 +47,7 @@ export function parseTwitchDownloader(raw: any): ChatLog {
       user: c.commenter?.name ?? c.commenter?.display_name ?? "?",
       text,
       emotes,
-      event: detectEvent(c),
+      ...detectEvent(c, text),
     };
   });
 
@@ -63,9 +65,35 @@ export function parseTwitchDownloader(raw: any): ChatLog {
   };
 }
 
-function detectEvent(c: any): string | undefined {
+// TwitchDownloader schreibt Sub-/Raid-Hinweise als normale Chatzeile des
+// Auslösers, z. B. "Name subscribed at Tier 1. They've subscribed for 8 months, …".
+const EVENT_PATTERNS: [event: string, pattern: RegExp][] = [
+  ["submysterygift", /^ is gifting (\d+) Tier \d Subs? to /i],
+  ["subgift", /^ gifted a Tier \d sub to /i],
+  ["resub", /^ subscribed (?:with Prime|at Tier \d)\. They've subscribed for (\d+) months/i],
+  ["sub", /^ subscribed (?:with Prime|at Tier \d)/i],
+  ["raid", /^ is raiding with a party of (\d+)/i],
+];
+
+function detectEvent(c: any, text: string): Pick<ChatMessage, "event" | "amount"> {
   const notice = c.message?.user_notice_params?.["msg-id"];
-  if (notice) return String(notice);
-  if (Number(c.message?.bits_spent) > 0) return "bits";
-  return undefined;
+  if (notice) return { event: String(notice) };
+  const bits = Number(c.message?.bits_spent);
+  if (bits > 0) return { event: "bits", amount: bits };
+
+  const raiders = text.match(/^(\d+) raiders from \S+ have joined/i);
+  if (raiders) return { event: "raid", amount: Number(raiders[1]) };
+
+  // Nur wenn die Zeile mit dem eigenen Namen beginnt, damit normale
+  // Nachrichten wie "subscribed at Tier 1 lol" nicht als Sub zählen.
+  const name = [c.commenter?.display_name, c.commenter?.name].find(
+    (n) => n && text.toLowerCase().startsWith(String(n).toLowerCase()),
+  );
+  if (!name) return {};
+  const rest = text.slice(String(name).length);
+  for (const [event, pattern] of EVENT_PATTERNS) {
+    const m = rest.match(pattern);
+    if (m) return { event, amount: m[1] ? Number(m[1]) : undefined };
+  }
+  return {};
 }
