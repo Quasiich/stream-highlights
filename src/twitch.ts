@@ -44,23 +44,35 @@ async function postForm(url: string, params: Record<string, string>) {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export interface PendingLogin {
+  /** Code, den der Streamer auf verificationUri bestätigt */
+  userCode: string;
+  verificationUri: string;
+  /** Erfüllt sich, sobald der Code bestätigt wurde (die Anmeldung ist dann schon gespeichert) */
+  done: Promise<TwitchAuth>;
+}
+
 /**
  * Anmeldung per Gerätecode: Der Streamer bestätigt einen kurzen Code auf
  * twitch.tv/activate, das Programm wartet so lange. Braucht kein Client-Secret.
  */
-export async function login(clientId: string, log: (line: string) => void = console.log): Promise<TwitchAuth> {
+export async function startLogin(clientId: string, authPath = AUTH_FILE): Promise<PendingLogin> {
   const start = await postForm(DEVICE_URL, { client_id: clientId, scopes: SCOPES });
   if (!start.ok) {
     throw new Error(`Twitch lehnt die Anmeldung ab (${start.status}: ${start.body.message ?? "unbekannt"}). Stimmt die Client-ID?`);
   }
   const { device_code, user_code, verification_uri } = start.body;
-  let interval = Number(start.body.interval) || 5;
-  const deadline = Date.now() + (Number(start.body.expires_in) || 1800) * 1000;
+  const done = waitForLogin(clientId, device_code, Number(start.body.interval) || 5, Number(start.body.expires_in) || 1800).then(
+    async (auth) => {
+      await saveAuth(auth, authPath);
+      return auth;
+    },
+  );
+  return { userCode: user_code, verificationUri: verification_uri, done };
+}
 
-  log(`Öffne ${verification_uri}`);
-  log(`und bestätige dort mit deinem Streamer-Konto den Code: ${user_code}`);
-  log("Warte auf Bestätigung …");
-
+async function waitForLogin(clientId: string, device_code: string, interval: number, expiresIn: number): Promise<TwitchAuth> {
+  const deadline = Date.now() + expiresIn * 1000;
   while (Date.now() < deadline) {
     await sleep(interval * 1000);
     const res = await postForm(TOKEN_URL, {
@@ -80,7 +92,7 @@ export async function login(clientId: string, log: (line: string) => void = cons
     }
     throw new Error(`Anmeldung fehlgeschlagen: ${res.body.message ?? res.status}`);
   }
-  throw new Error("Der Code ist abgelaufen. Bitte `npm run login` erneut starten.");
+  throw new Error("Der Code ist abgelaufen. Bitte erneut mit Twitch verbinden.");
 }
 
 async function validate(accessToken: string): Promise<{ login?: string; user_id?: string }> {
@@ -95,7 +107,9 @@ async function refresh(auth: TwitchAuth): Promise<TwitchAuth> {
     grant_type: "refresh_token",
     refresh_token: auth.refreshToken,
   });
-  if (!res.ok) throw new Error("Die Twitch-Anmeldung ist abgelaufen. Bitte `npm run login` erneut ausführen.");
+  if (!res.ok) {
+    throw new Error("Die Twitch-Anmeldung ist abgelaufen. Bitte erneut verbinden („Mit Twitch verbinden“ bzw. `npm run login`).");
+  }
   return { ...auth, accessToken: res.body.access_token, refreshToken: res.body.refresh_token ?? auth.refreshToken };
 }
 

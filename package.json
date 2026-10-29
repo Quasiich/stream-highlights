@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "Findet Highlights in Twitch-VODs anhand des Chats",
   "scripts": {
+    "start": "tsx src/main.ts",
+    "build:exe": "tsx scripts/build-exe.ts",
     "analyze": "tsx src/cli.ts",
     "login": "tsx src/login.ts",
     "test": "tsx --test test/*.test.ts",
@@ -10,6 +12,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },

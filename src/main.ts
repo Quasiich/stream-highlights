@@ -1,0 +1,42 @@
+import { dirname } from "node:path";
+import * as sea from "node:sea";
+import { openUrl, PORT, readHtmlFromDisk, startServer } from "./server.ts";
+
+/**
+ * Startpunkt der Web-Oberfläche, sowohl für `npm start` als auch für die
+ * stream-highlights.exe. Die .exe arbeitet in ihrem eigenen Ordner: Dort
+ * landen output/, die Twitch-Anmeldung und TwitchDownloaderCLI.
+ */
+async function main() {
+  const packaged = sea.isSea();
+  if (packaged) process.chdir(dirname(process.execPath));
+  const html = packaged ? async () => sea.getAsset("index.html", "utf8") : readHtmlFromDisk;
+  const url = `http://localhost:${PORT}`;
+
+  try {
+    await startServer(html);
+  } catch (err: any) {
+    if (err.code === "EADDRINUSE") {
+      // Läuft schon (z. B. doppelt gestartet): einfach die Seite öffnen.
+      console.log(`stream-highlights läuft bereits: ${url}`);
+      openUrl(url);
+      return;
+    }
+    throw err;
+  }
+
+  console.log("stream-highlights läuft.");
+  console.log(`Oberfläche: ${url}`);
+  console.log("Dieses Fenster offen lassen. Schließen beendet das Programm.");
+  if (!process.argv.includes("--no-open")) openUrl(url);
+}
+
+main().catch((err) => {
+  console.error(`Fehler: ${err.message}`);
+  process.exitCode = 1;
+  // Per Doppelklick gestartet würde sich das Fenster sonst sofort schließen.
+  if (sea.isSea()) {
+    console.error("Zum Schließen Enter drücken.");
+    process.stdin.once("data", () => process.exit(1));
+  }
+});

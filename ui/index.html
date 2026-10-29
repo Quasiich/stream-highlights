@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stream-highlights</title>
+<style>
+  :root {
+    --bg: #f6f5f8;
+    --panel: #ffffff;
+    --panel-2: #f1eff5;
+    --text: #1d1a24;
+    --muted: #6b6578;
+    --line: #e2dfe9;
+    --accent: #8a43f5;
+    --accent-ink: #ffffff;
+    --accent-soft: #efe6fe;
+    --marker: #b7791f;
+    --marker-soft: #fdf3e1;
+    --ok: #1f8a4c;
+    --error: #c53030;
+    --error-soft: #fdecec;
+    --radius: 10px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121016;
+      --panel: #1b1821;
+      --panel-2: #24202c;
+      --text: #ece9f2;
+      --muted: #a09aae;
+      --line: #322d3c;
+      --accent: #a370f7;
+      --accent-ink: #ffffff;
+      --accent-soft: #2c2140;
+      --marker: #f0b453;
+      --marker-soft: #3a2c14;
+      --ok: #4cc785;
+      --error: #f27b7b;
+      --error-soft: #3b1d1d;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  button, input { font: inherit; color: inherit; }
+  a { color: var(--accent); }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  header h1 span { color: var(--accent); }
+  .spacer { flex: 1; }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 24px; padding: 24px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; padding: 16px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  .panel + .panel { margin-top: 18px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: .55; cursor: default; filter: none; }
+  .btn.small { padding: 4px 10px; font-size: 13px; }
+  input[type=text], input[type=number] {
+    width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 9px 12px;
+  }
+  input:focus-visible, .btn:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .analyze-form { display: flex; gap: 10px; flex-wrap: wrap; }
+  .analyze-form input { flex: 1; min-width: 220px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
+  .options label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
+  .check { display: flex !important; align-items: center; gap: 8px; grid-template-columns: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); font-size: 13px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .hidden { display: none !important; }
+  .progress-bar { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin: 10px 0; }
+  .progress-bar div { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .progress-bar.indeterminate div { width: 30%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  .steps { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  .steps li { padding: 2px 0; color: var(--muted); }
+  .steps li.current { color: var(--text); }
+  .error-box { background: var(--error-soft); color: var(--error); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
+  .note { background: var(--panel-2); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .history { list-style: none; margin: 0; padding: 0; }
+  .history li button {
+    width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+    display: grid; gap: 2px;
+  }
+  .history li button:hover, .history li button.active { background: var(--accent-soft); }
+  .history .title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .result-head h2 { font-size: 17px; margin: 0 0 4px; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .result-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 18px; margin-top: 16px; align-items: start; }
+  @media (max-width: 1150px) { .result-grid { grid-template-columns: 1fr; } }
+  .player { position: sticky; top: 16px; }
+  .player-frame { aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; display: grid; place-items: center; color: #aaa; }
+  .player-frame iframe { width: 100%; height: 100%; border: 0; }
+  .player-caption { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 1.4em; }
+  .list { display: grid; gap: 8px; }
+  .row {
+    display: grid; grid-template-columns: 34px 1fr auto; gap: 4px 12px; align-items: center;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; background: var(--panel);
+  }
+  .row:hover { border-color: var(--accent); }
+  .row.active { border-color: var(--accent); background: var(--accent-soft); }
+  .row.marker { border-left: 4px solid var(--marker); }
+  .rank { font-weight: 700; color: var(--muted); grid-row: span 2; text-align: center; }
+  .time { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .meta { font-size: 13px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .words { grid-column: 2 / 4; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); white-space: nowrap; }
+  .badge.marker { background: var(--marker-soft); color: var(--marker); font-weight: 600; }
+  .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .summary-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  dialog {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text);
+    width: min(520px, calc(100vw - 32px)); padding: 22px;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .code { font: 700 30px/1 ui-monospace, Consolas, monospace; letter-spacing: .12em; text-align: center; padding: 16px; background: var(--panel-2); border-radius: 8px; margin: 12px 0; }
+  ol.setup { padding-left: 20px; margin: 8px 0 14px; font-size: 14px; }
+  ol.setup li { margin: 4px 0; }
+  .dialog-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+  .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>stream<span>-</span>highlights</h1>
+  <div class="spacer"></div>
+  <div class="chip" id="twitchChip"><span class="dot" id="twitchDot"></span><span id="twitchText">Twitch …</span></div>
+  <button class="btn small" id="twitchBtn">Mit Twitch verbinden</button>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="panel">
+      <h3>Bisherige Analysen</h3>
+      <ul class="history" id="history"><li class="muted small">Noch keine.</li></ul>
+    </div>
+  </aside>
+
+  <main>
+    <section class="panel">
+      <h2>VOD analysieren</h2>
+      <form class="analyze-form" id="analyzeForm">
+        <input type="text" id="vodInput" placeholder="https://www.twitch.tv/videos/…" autocomplete="off" aria-label="VOD-Link oder VOD-ID" required>
+        <button class="btn primary" id="analyzeBtn" type="submit">Analysieren</button>
+      </form>
+      <details>
+        <summary>Erweiterte Einstellungen</summary>
+        <div class="options">
+          <label>Anzahl Chat-Highlights <input type="number" id="optTop" min="1" max="100"></label>
+          <label>Mindestabstand (s) <input type="number" id="optGap" min="10" max="3600"></label>
+          <label>Fenstergröße (s) <input type="number" id="optBucket" min="5" max="300"></label>
+          <label>Vorlauf vor Marker (s) <input type="number" id="optMarkerLead" min="0" max="600"></label>
+          <label class="check"><input type="checkbox" id="optRefresh"> Chat neu herunterladen</label>
+        </div>
+      </details>
+
+      <div id="progress" class="hidden">
+        <div class="progress-bar" id="bar"><div></div></div>
+        <ul class="steps" id="steps"></ul>
+      </div>
+      <div id="analyzeError" class="error-box hidden" role="alert"></div>
+    </section>
+
+    <section class="panel" id="result">
+      <div class="empty" id="emptyState">
+        Füge oben den Link zu einem Twitch-VOD ein.<br>
+        Der Chat wird geladen und die spannendsten Stellen werden hier mit Vorschau angezeigt.
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="loginDialog">
+  <div id="loginSetup">
+    <h2>Mit Twitch verbinden</h2>
+    <p class="small muted">Damit werden die Stream-Marker berücksichtigt, die du während des Streams per Hotkey setzt. Einmalig nötig:</p>
+    <ol class="setup">
+      <li>Zwei-Faktor-Authentifizierung in deinem Twitch-Konto einschalten.</li>
+      <li>Auf <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener">dev.twitch.tv/console/apps</a> eine Anwendung registrieren: beliebiger eindeutiger Name, Redirect-URL <code>http://localhost:3000</code>, Client-Typ „Öffentlich“.</li>
+      <li>Bei der App auf „Verwalten“ klicken und die Client-ID hier einfügen:</li>
+    </ol>
+    <label class="small muted" for="clientId">Client-ID</label>
+    <input type="text" id="clientId" autocomplete="off" spellcheck="false">
+    <div id="loginError" class="error-box hidden" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn" data-close>Abbrechen</button>
+      <button class="btn primary" id="loginStart">Weiter</button>
+    </div>
+  </div>
+  <div id="loginWait" class="hidden">
+    <h2>Code bestätigen</h2>
+    <p class="small">Im Browser hat sich <a id="loginLink" target="_blank" rel="noopener">twitch.tv/activate</a> geöffnet. Melde dich dort mit dem Konto deines Kanals an und gib diesen Code ein:</p>
+    <div class="code" id="loginCode">…</div>
+    <p class="small muted" id="loginStatus">Warte auf Bestätigung …</p>
+    <div class="dialog-actions"><button class="btn" data-close>Schließen</button></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function clock(seconds) {
+  const s = Math.floor(seconds), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
+}
+function twitchTime(seconds) {
+  const s = Math.floor(seconds);
+  return Math.floor(s / 3600) + "h" + Math.floor((s % 3600) / 60) + "m" + (s % 60) + "s";
+}
+const vodUrl = (id, t) => "https://www.twitch.tv/videos/" + id + "?t=" + twitchTime(t);
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Fehler " + res.status);
+  return data;
+}
+
+// ---- Status & Twitch-Verbindung ----------------------------------------
+let status = null;
+async function refreshStatus() {
+  status = await api("/api/status");
+  const connected = Boolean(status.twitch);
+  $("twitchDot").classList.toggle("on", connected);
+  $("twitchText").textContent = connected ? "Verbunden als " + (status.twitch.login || "?") : "Twitch nicht verbunden";
+  $("twitchBtn").textContent = connected ? "Trennen" : "Mit Twitch verbinden";
+  if (status.clientId && !$("clientId").value) $("clientId").value = status.clientId;
+  for (const [key, el] of [["top", "optTop"], ["gap", "optGap"], ["bucket", "optBucket"], ["markerLead", "optMarkerLead"]]) {
+    if (!$(el).value) $(el).value = status.defaults[key];
+  }
+  return status;
+}
+
+$("twitchBtn").addEventListener("click", async () => {
+  if (status?.twitch) {
+    if (!confirm("Twitch-Verbindung trennen? Stream-Marker werden dann nicht mehr berücksichtigt.")) return;
+    await api("/api/logout", { method: "POST" });
+    await refreshStatus();
+    return;
+  }
+  $("loginSetup").classList.remove("hidden");
+  $("loginWait").classList.add("hidden");
+  $("loginError").classList.add("hidden");
+  $("loginDialog").showModal();
+});
+for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => $("loginDialog").close());
+
+$("loginStart").addEventListener("click", async () => {
+  $("loginError").classList.add("hidden");
+  $("loginStart").disabled = true;
+  try {
+    const login = await api("/api/login", { method: "POST", body: { clientId: $("clientId").value } });
+    $("loginCode").textContent = login.userCode;
+    $("loginLink").href = login.verificationUri;
+    $("loginStatus").textContent = "Warte auf Bestätigung …";
+    $("loginSetup").classList.add("hidden");
+    $("loginWait").classList.remove("hidden");
+    pollLogin();
+  } catch (err) {
+    $("loginError").textContent = err.message;
+    $("loginError").classList.remove("hidden");
+  } finally {
+    $("loginStart").disabled = false;
+  }
+});
+
+async function pollLogin() {
+  const login = await api("/api/login");
+  if (login.state === "pending") return setTimeout(pollLogin, 2000);
+  if (login.state === "done") {
+    await refreshStatus();
+    $("loginStatus").textContent = "Verbunden als " + (status.twitch?.login || "?") + ". Du kannst das Fenster schließen.";
+    setTimeout(() => $("loginDialog").close(), 1500);
+  } else if (login.state === "error") {
+    $("loginStatus").textContent = "Fehlgeschlagen: " + login.error;
+  }
+}
+
+// ---- Analyse ------------------------------------------------------------
+const STAGE_LABEL = { tools: "Vorbereitung", chat: "Chat", markers: "Streamer-Marker", analyze: "Auswertung" };
+
+$("analyzeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("analyzeError").classList.add("hidden");
+  try {
+    const job = await api("/api/analyze", {
+      method: "POST",
+      body: {
+        input: $("vodInput").value,
+        top: $("optTop").value,
+        gap: $("optGap").value,
+        bucket: $("optBucket").value,
+        markerLead: $("optMarkerLead").value,
+        refresh: $("optRefresh").checked,
+      },
+    });
+    follow(job.id);
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+function setBusy(busy) {
+  $("analyzeBtn").disabled = busy;
+  $("analyzeBtn").textContent = busy ? "Läuft …" : "Analysieren";
+  $("progress").classList.toggle("hidden", !busy);
+}
+
+function showError(message) {
+  $("analyzeError").textContent = message;
+  $("analyzeError").classList.remove("hidden");
+}
+
+function follow(jobId) {
+  setBusy(true);
+  $("steps").innerHTML = "";
+  const bar = $("bar");
+  const steps = new Map();
+  const source = new EventSource("/api/jobs/" + jobId);
+  source.addEventListener("progress", (e) => {
+    const p = JSON.parse(e.data);
+    let li = steps.get(p.stage);
+    if (!li) {
+      for (const other of steps.values()) other.classList.remove("current");
+      li = document.createElement("li");
+      steps.set(p.stage, li);
+      $("steps").appendChild(li);
+    }
+    li.className = "current";
+    li.textContent = (STAGE_LABEL[p.stage] || p.stage) + ": " + p.message + (p.percent !== undefined && p.percent < 100 ? " " + p.percent + " %" : "");
+    bar.classList.toggle("indeterminate", p.percent === undefined);
+    bar.firstElementChild.style.width = (p.percent ?? 0) + "%";
+  });
+  source.addEventListener("done", async (e) => {
+    source.close();
+    setBusy(false);
+    const { id } = JSON.parse(e.data);
+    await loadHistory();
+    await showReport(id);
+  });
+  source.addEventListener("failed", (e) => {
+    source.close();
+    setBusy(false);
+    showError(JSON.parse(e.data).error);
+  });
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED) setBusy(false);
+  };
+}
+
+// ---- Verlauf ------------------------------------------------------------
+let currentId = null;
+async function loadHistory() {
+  const reports = await api("/api/reports");
+  const ul = $("history");
+  if (!reports.length) {
+    ul.innerHTML = '<li class="muted small">Noch keine.</li>';
+    return reports;
+  }
+  ul.innerHTML = reports
+    .map(
+      (r) => `<li><button data-id="${esc(r.id)}" class="${r.id === currentId ? "active" : ""}">
+        <span class="title">${esc(r.channel || "VOD " + r.id)}</span>
+        <span class="small muted title">${esc(r.title || r.id)}</span>
+        <span class="small muted">${r.highlightCount} Highlights${r.analyzedAt ? " · " + new Date(r.analyzedAt).toLocaleDateString("de-DE") : ""}</span>
+      </button></li>`,
+    )
+    .join("");
+  for (const b of ul.querySelectorAll("button")) b.addEventListener("click", () => showReport(b.dataset.id));
+  return reports;
+}
+
+// ---- Ergebnis -----------------------------------------------------------
+async function showReport(id) {
+  const r = await api("/api/reports/" + encodeURIComponent(id));
+  // Analysen aus älteren Programmversionen haben noch keine Marker/Events
+  r.video = r.video || { id };
+  r.video.id = r.video.id || id;
+  r.events = r.events || { summary: { subs: 0, giftedSubs: 0, raids: 0, bits: 0 }, list: [] };
+  for (const h of r.highlights) {
+    h.source = h.source || "chat";
+    h.markers = h.markers || [];
+    h.topWords = h.topWords || [];
+  }
+  currentId = id;
+  for (const b of $("history").querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === id);
+  const v = r.video;
+  const markerCount = r.highlights.filter((h) => h.source !== "chat").length;
+
+  const rows = r.highlights
+    .map((h, i) => {
+      const isMarker = h.source !== "chat";
+      const badge = isMarker
+        ? `<span class="badge marker">★ ${h.source === "marker+chat" ? "Marker + Chat" : "Marker"}</span>`
+        : `<span class="badge">Chat</span>`;
+      const words = [h.markers.length ? "Marker: " + h.markers.join(" / ") : "", h.topWords.join(", ")].filter(Boolean).join(" · ");
+      return `<div class="row${isMarker ? " marker" : ""}" tabindex="0" data-i="${i}">
+        <div class="rank">${h.rank}</div>
+        <div><span class="time">${clock(h.start)} – ${clock(h.end)}</span> ${badge}</div>
+        <div class="meta"><span class="score">${h.score}×</span><span>${h.chatters} Chatter</span><span>${clock(h.end - h.start)}</span></div>
+        <div class="words">${esc(words) || "&nbsp;"}</div>
+      </div>`;
+    })
+    .join("");
+
+  const s = r.events.summary;
+  const eventRows = r.events.list
+    .map((e) => `<tr><td class="num"><a href="${vodUrl(v.id, e.offset)}" target="_blank" rel="noopener">${clock(e.offset)}</a></td><td>${esc(e.user)}</td><td>${esc(describe(e))}</td></tr>`)
+    .join("");
+
+  $("result").innerHTML = `
+    <div class="result-head">
+      <div style="flex:1; min-width: 0">
+        <h2>${esc(v.title || "VOD " + v.id)}</h2>
+        <div class="stats">
+          ${v.channel ? `<span>${esc(v.channel)}</span>` : ""}
+          ${v.length ? `<span>${clock(v.length)} lang</span>` : ""}
+          ${r.messageCount ? `<span>${r.messageCount.toLocaleString("de-DE")} Chat-Nachrichten</span>` : ""}
+          <span>${r.highlights.length} Highlights${markerCount ? `, davon ${markerCount} vom Streamer markiert` : ""}</span>
+        </div>
+      </div>
+      <a class="btn small" href="https://www.twitch.tv/videos/${esc(v.id)}" target="_blank" rel="noopener">Auf Twitch öffnen</a>
+      <button class="btn small" id="openFolder">Ordner öffnen</button>
+    </div>
+    ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
+    <div class="result-grid">
+      <div class="list" id="hlList">${rows || '<div class="empty">Keine deutlichen Peaks gefunden.</div>'}</div>
+      <div class="player">
+        <div class="player-frame" id="playerFrame">Highlight anklicken für die Vorschau</div>
+        <div class="player-caption" id="playerCaption"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:18px">
+      <h3>Subs, Raids &amp; Bits</h3>
+      <p class="small muted" style="margin-top:0">Fließen nicht in die Highlights ein. Einzeln aufgeführt: Gift-Bomben ab 5 Subs, Raids ab 10 Zuschauern, Cheers ab 500 Bits.</p>
+      <div class="summary-chips">
+        <span class="chip">${s.subs} neue Subs</span>
+        <span class="chip">${s.giftedSubs} verschenkte Subs</span>
+        <span class="chip">${s.raids} Raids</span>
+        <span class="chip">${s.bits} Bits</span>
+      </div>
+      ${eventRows ? `<table><thead><tr><th>Zeit</th><th>Wer</th><th>Was</th></tr></thead><tbody>${eventRows}</tbody></table>` : '<p class="small muted">Keine Events über den Schwellen.</p>'}
+    </div>`;
+
+  $("openFolder").addEventListener("click", () => api("/api/reports/" + encodeURIComponent(id) + "/open", { method: "POST" }));
+  for (const row of $("hlList").querySelectorAll(".row")) {
+    const play = () => playHighlight(v.id, r.highlights[Number(row.dataset.i)], row);
+    row.addEventListener("click", play);
+    row.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), play()));
+  }
+}
+
+function describe(e) {
+  switch (e.type) {
+    case "submysterygift": return (e.amount === 1 ? "1 Sub" : (e.amount ?? "?") + " Subs") + " verschenkt";
+    case "raid": return e.amount ? "Raid mit " + e.amount + " Zuschauern" : "Raid";
+    case "bits": return (e.amount ?? "?") + " Bits";
+    default: return e.type;
+  }
+}
+
+function playHighlight(videoId, h, row) {
+  for (const r of $("hlList").querySelectorAll(".row")) r.classList.toggle("active", r === row);
+  const src = "https://player.twitch.tv/?video=v" + encodeURIComponent(videoId) + "&parent=" + encodeURIComponent(location.hostname) +
+    "&time=" + twitchTime(h.start) + "&autoplay=true";
+  $("playerFrame").innerHTML = `<iframe src="${esc(src)}" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
+  $("playerCaption").innerHTML = `#${h.rank}: ${clock(h.start)} – ${clock(h.end)} · <a href="${vodUrl(videoId, h.start)}" target="_blank" rel="noopener">auf Twitch öffnen</a>`;
+}
+
+// ---- Start --------------------------------------------------------------
+(async () => {
+  await refreshStatus();
+  const reports = await loadHistory();
+  if (status.running) {
+    $("vodInput").value = status.running.input;
+    follow(status.running.id);
+  } else if (reports.length) {
+    await showReport(reports[0].id);
+  }
+})().catch((err) => showError(err.message));
+</script>
+</body>
+</html>

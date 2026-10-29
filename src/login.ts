@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { AUTH_FILE, loadAuth, login, saveAuth } from "./twitch.ts";
+import { AUTH_FILE, loadAuth, startLogin } from "./twitch.ts";
 
 const usage = `Verwendung:
   npm run login -- --client-id <Client-ID deiner Twitch-App>
@@ -22,8 +22,11 @@ async function main() {
     process.exit(1);
   }
 
-  const auth = await login(clientId);
-  await saveAuth(auth);
+  const pending = await startLogin(clientId);
+  console.log(`Öffne ${pending.verificationUri}`);
+  console.log(`und bestätige dort mit deinem Streamer-Konto den Code: ${pending.userCode}`);
+  console.log("Warte auf Bestätigung …");
+  const auth = await pending.done;
   console.log(`Angemeldet als ${auth.login ?? "?"}. Gespeichert in ${AUTH_FILE}.`);
   console.log("Ab jetzt lädt `npm run analyze` bei VODs dieses Kanals automatisch die Stream-Marker.");
 }
