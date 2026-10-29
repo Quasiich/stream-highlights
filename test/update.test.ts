@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupPath, compareVersions, installUpdate, parseRelease, type UpdateInfo } from "../src/update.ts";
+import { backupPath, compareVersions, deleteBackup, installUpdate, parseRelease, readBackup, type UpdateInfo } from "../src/update.ts";
 
 test("compareVersions vergleicht Zahl für Zahl, Vorabversionen zählen weniger", () => {
   assert.equal(compareVersions("1.1.1", "1.1.0"), 1);
@@ -94,4 +94,28 @@ test("eine ältere .old.exe wird durch die gerade ersetzte Version abgelöst", a
   await writeFile(backupPath(exe), "uralte version");
   await installUpdate(info, () => {}, exe);
   assert.equal(await readFile(backupPath(exe), "utf8"), "alte version");
+});
+
+test("nach dem Update kennt die Notfall-Kopie ihre Version und lässt sich löschen", async (t) => {
+  const { exe, info } = await setup(t, Buffer.from("neue version!"));
+  assert.equal(await readBackup(exe), undefined, "vorher keine Kopie");
+  await installUpdate(info, () => {}, exe);
+  const backup = await readBackup(exe);
+  assert.equal(backup?.version, "1.1.1");
+  assert.equal(backup?.size, "alte version".length);
+  assert.ok(backup?.replacedAt);
+
+  await deleteBackup(exe);
+  assert.equal(await readBackup(exe), undefined);
+  assert.equal(existsSync(backupPath(exe)), false);
+  assert.equal(existsSync(backupPath(exe).replace(/\.exe$/, ".json")), false);
+  assert.equal(await readFile(exe, "utf8"), "neue version!", "die laufende .exe bleibt");
+});
+
+test("eine Notfall-Kopie ohne Begleitdatei (Update vor 1.2.3) wird trotzdem erkannt", async (t) => {
+  const { exe } = await setup(t, Buffer.from("x"));
+  await writeFile(backupPath(exe), "ältere version");
+  const backup = await readBackup(exe);
+  assert.equal(backup?.version, undefined);
+  assert.equal(backup?.size, Buffer.byteLength("ältere version"));
 });

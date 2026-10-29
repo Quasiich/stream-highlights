@@ -155,6 +155,8 @@
   .more { width: 100%; margin-top: 10px; }
   .side-note { font-size: 13px; color: var(--muted); }
   .side-note .btn { margin-top: 10px; }
+  .backup-note { margin: 14px 4px 0; }
+  .link-btn { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: inherit; }
   .result-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
   .result-head h2 { font-size: 17px; margin: 0 0 4px; }
   .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
@@ -252,6 +254,10 @@
       <div id="liveError" class="error-box hidden small" role="alert"></div>
       <details id="liveLogBox" class="hidden"><summary>Protokoll</summary><pre class="live-log" id="liveLog"></pre></details>
     </div>
+    <p class="side-note backup-note hidden" id="backupNote">
+      <span id="backupText"></span>
+      <button class="link-btn" id="backupDelete">Löschen</button>
+    </p>
   </aside>
 
   <main>
@@ -831,12 +837,35 @@ async function refreshUpdate(force = false) {
   renderUpdate();
 }
 
+// Notfall-Kopie der vorherigen Version: unauffällig anzeigen, per Klick löschbar
+function renderBackup(backup, installing) {
+  $("backupNote").classList.toggle("hidden", !backup || installing);
+  if (!backup) return;
+  const mb = Math.round(backup.size / 1024 / 1024);
+  const what = backup.version ? "Version " + backup.version : "Die vorherige Version";
+  const when = backup.replacedAt ? ", ersetzt am " + new Date(backup.replacedAt).toLocaleDateString("de-DE") : "";
+  $("backupText").textContent = what + " liegt als Notfall-Kopie (stream-highlights.old.exe, " + mb + " MB" + when + ") im Programmordner.";
+}
+
+$("backupDelete").addEventListener("click", async () => {
+  const b = update?.backup;
+  const what = b?.version ? "Version " + b.version : "die vorherige Version";
+  if (!confirm("Notfall-Kopie (" + what + ") löschen?\n\nDanach kannst du nicht mehr auf diese Version zurückwechseln.")) return;
+  try {
+    await api("/api/update/backup", { method: "DELETE" });
+    await refreshUpdate();
+  } catch (err) {
+    alert("Löschen fehlgeschlagen: " + err.message);
+  }
+});
+
 function renderUpdate() {
   const u = update;
   const installing = u.install.state === "downloading" || u.install.state === "restarting";
   $("appVersion").textContent = "v" + u.current;
   $("appVersion").classList.toggle("outdated", u.available);
   $("appVersion").title = u.available ? "Version " + u.latest + " ist verfügbar" : u.error || "Aktuelle Version";
+  renderBackup(u.backup, installing);
 
   $("updateBanner").classList.toggle("hidden", !u.available && !installing);
   if (!u.available && !installing) return;

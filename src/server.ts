@@ -9,7 +9,7 @@ import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAn
 import { defaultRecorderOptions } from "./recorder.ts";
 import { findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
-import { backupPath, canSelfUpdate, checkForUpdate, installUpdate, launchNewVersion, VERSION } from "./update.ts";
+import { canSelfUpdate, checkForUpdate, deleteBackup, installUpdate, launchNewVersion, readBackup, VERSION } from "./update.ts";
 
 export const PORT = 4777;
 /** Einstellungen, die einen Neustart überdauern (im Programmordner) */
@@ -195,8 +195,15 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
       selfUpdate: canSelfUpdate(),
       blocked: updateBlocked(),
       install,
-      backup: canSelfUpdate() && existsSync(backupPath()),
+      backup: canSelfUpdate() ? ((await readBackup()) ?? null) : null,
     });
+  }
+
+  if (path === "/api/update/backup" && req.method === "DELETE") {
+    if (!canSelfUpdate()) return send(res, 400, { error: "Nur in der stream-highlights.exe." });
+    if (install.state === "downloading" || install.state === "restarting") return send(res, 409, { error: "Das Update läuft gerade." });
+    await deleteBackup();
+    return send(res, 200, { ok: true });
   }
 
   if (path === "/api/update" && req.method === "POST") {

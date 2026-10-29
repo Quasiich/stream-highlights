@@ -63,7 +63,9 @@ Version hervorgehoben. Installiert wird nie von selbst, sondern erst mit
   Analysen, Einstellungen und Twitch-Verbindung bleiben erhalten.
 - Die bisherige Version bleibt für den Notfall als
   `stream-highlights.old.exe` im selben Ordner (beim nächsten Update wird sie
-  ersetzt). Macht die neue Version Probleme: Programm schließen,
+  ersetzt). Links unten in der Oberfläche steht, welche Version das ist; mit
+  **Löschen** daneben lässt sie sich entfernen, wenn du den Platz brauchst.
+  Macht die neue Version Probleme: Programm schließen,
   `stream-highlights.exe` löschen und `stream-highlights.old.exe` in
   `stream-highlights.exe` umbenennen.
 - Solange ein Live-Mitschnitt läuft (Stream aktiv oder Auswertung nach dem

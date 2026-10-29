@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
-import { rename, rm } from "node:fs/promises";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import * as sea from "node:sea";
 
@@ -91,6 +91,44 @@ export function backupPath(exe = process.execPath): string {
   return join(dirname(exe), basename(exe).replace(/\.exe$/i, "") + ".old.exe");
 }
 
+/** Begleitdatei der Notfall-Kopie: welche Version sie ist und wann sie ersetzt wurde */
+function backupInfoPath(exe = process.execPath): string {
+  return backupPath(exe).replace(/\.exe$/i, ".json");
+}
+
+export interface BackupInfo {
+  /** Fehlt bei Kopien aus Updates vor 1.2.3 */
+  version?: string;
+  replacedAt?: string;
+  size: number;
+}
+
+/** Die Notfall-Kopie, falls vorhanden */
+export async function readBackup(exe = process.execPath): Promise<BackupInfo | undefined> {
+  const backup = backupPath(exe);
+  if (!existsSync(backup)) return undefined;
+  const { size } = await stat(backup);
+  try {
+    const meta = JSON.parse(await readFile(backupInfoPath(exe), "utf8"));
+    return { version: meta.version, replacedAt: meta.replacedAt, size };
+  } catch {
+    return { size };
+  }
+}
+
+/** Löscht die Notfall-Kopie samt Begleitdatei. */
+export async function deleteBackup(exe = process.execPath): Promise<void> {
+  try {
+    await rm(backupPath(exe), { force: true });
+  } catch (err: any) {
+    if (err.code === "EBUSY" || err.code === "EPERM") {
+      throw new Error("Die Notfall-Kopie ist gerade gestartet oder gesperrt und lässt sich nicht löschen.");
+    }
+    throw err;
+  }
+  await rm(backupInfoPath(exe), { force: true });
+}
+
 /**
  * Lädt die neue .exe, prüft Größe und SHA-256 und tauscht sie gegen die
  * laufende aus. Die bisherige bleibt als stream-highlights.old.exe liegen.
@@ -127,6 +165,7 @@ export async function installUpdate(info: UpdateInfo, onProgress: (percent: numb
   // Eine laufende .exe lässt sich unter Windows nicht überschreiben, aber umbenennen.
   const backup = backupPath(exe);
   await rm(backup, { force: true });
+  await rm(backupInfoPath(exe), { force: true });
   await rename(exe, backup);
   try {
     await rename(fresh, exe);
@@ -135,6 +174,7 @@ export async function installUpdate(info: UpdateInfo, onProgress: (percent: numb
     await rm(fresh, { force: true });
     throw err;
   }
+  await writeFile(backupInfoPath(exe), JSON.stringify({ version: info.current, replacedAt: new Date().toISOString() }, null, 2)).catch(() => {});
   onProgress(100);
 }
 
