@@ -1,0 +1,17 @@
+{
+  "name": "stream-highlights",
+  "version": "1.0.0",
+  "description": "Findet Highlights in Twitch-VODs anhand des Chats",
+  "scripts": {
+    "analyze": "tsx src/cli.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "type": "module"
+}
