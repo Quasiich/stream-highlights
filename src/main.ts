@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import * as sea from "node:sea";
+import { minimizeOwnConsole } from "./console.ts";
 import { openUrl, PORT, readHtmlFromDisk, restoreLive, shutdownLive, startServer } from "./server.ts";
 
 /**
@@ -31,7 +32,11 @@ async function main() {
   console.log("stream-highlights läuft.");
   console.log(`Oberfläche: ${url}`);
   console.log("Dieses Fenster offen lassen. Schließen beendet das Programm.");
-  if (!process.argv.includes("--no-open")) openUrl(url);
+  if (!process.argv.includes("--no-open")) {
+    openUrl(url);
+    // Das Fenster wird nur gebraucht, um das Programm zu beenden: aus dem Weg damit.
+    if (packaged && !process.argv.includes("--no-minimize")) minimizeOwnConsole();
+  }
 
   // Live-Mitschnitt sauber schließen; SIGHUP kommt unter Windows beim Schließen des Fensters.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {

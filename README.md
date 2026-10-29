@@ -12,8 +12,13 @@ Der einfachste Weg, ganz ohne Installation:
 1. `stream-highlights.exe` in einen eigenen Ordner legen, z. B.
    `Dokumente\stream-highlights`. Dort landen später auch die Ergebnisse.
 2. Doppelklicken. Es öffnet sich ein Konsolenfenster und die Oberfläche im
-   Browser (http://localhost:4777). Das Konsolenfenster offen lassen; wird
-   es geschlossen, beendet sich das Programm.
+   Browser (http://localhost:4777). Das Konsolenfenster minimiert sich danach
+   von selbst in die Taskleiste. Nicht schließen: Damit beendet sich das
+   Programm. Wer das Fenster lieber offen sieht, startet die .exe mit
+   `--no-minimize`. Aus einem bereits offenen Terminal gestartet, bleibt
+   dessen Fenster ohnehin, wie es ist. In Windows Terminal, das die .exe als
+   Tab in einem vorhandenen Fenster öffnet, wird dieses ganze Fenster
+   minimiert.
 3. VOD-Link einfügen und auf **Analysieren** klicken.
 
 Beim ersten Mal lädt das Programm automatisch `TwitchDownloaderCLI` aus dem
