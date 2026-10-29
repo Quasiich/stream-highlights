@@ -42,10 +42,12 @@ export function toConsole(log: ChatLog, highlights: Highlight[], events: StreamE
   ];
   if (highlights.length === 0) lines.push("Keine deutlichen Chat-Peaks gefunden.");
   for (const h of highlights) {
-    lines.push(
-      `#${h.rank}  ${clock(h.start)} – ${clock(h.end)}  (Peak ${clock(h.peak)}, ${h.score}× normal, ${h.chatters} Chatter)`,
-      `    ${vodLink(log.videoId, h.start)}`,
-    );
+    const what =
+      h.source === "chat"
+        ? `Peak ${clock(h.peak)}, ${h.score}× normal, ${h.chatters} Chatter`
+        : `★ Streamer-Marker ${clock(h.peak)}${h.source === "marker+chat" ? `, Chat ${h.score}× normal` : ""}`;
+    lines.push(`#${h.rank}  ${clock(h.start)} – ${clock(h.end)}  (${what})`, `    ${vodLink(log.videoId, h.start)}`);
+    if (h.markers.length) lines.push(`    Marker: ${h.markers.join(" / ")}`);
     if (h.topWords.length) lines.push(`    Chat: ${h.topWords.join(", ")}`);
     lines.push("");
   }
@@ -61,19 +63,27 @@ export function toConsole(log: ChatLog, highlights: Highlight[], events: StreamE
 }
 
 export function toMarkdown(log: ChatLog, highlights: Highlight[], events: StreamEvent[] = []): string {
+  const cell = (s: string) => s.replace(/\|/g, "\\|");
   const rows = highlights.map(
     (h) =>
-      `| ${h.rank} | [${clock(h.start)}](${vodLink(log.videoId, h.start)}) | ${clock(h.end - h.start)} | ${h.score}× | ${h.chatters} | ${h.topWords.slice(0, 3).join(", ").replace(/\|/g, "\\|")} |`,
+      `| ${h.rank} | ${cell(sourceLabel(h))} | [${clock(h.start)}](${vodLink(log.videoId, h.start)}) | ${clock(h.end - h.start)} | ${h.score}× | ${h.chatters} | ${cell(h.topWords.slice(0, 3).join(", "))} |`,
   );
   return [
     `# Highlights: ${log.title ?? log.videoId ?? "VOD"}`,
     "",
-    "| # | Start | Dauer | Ausschlag | Chatter | Chat sagt |",
-    "|---|---|---|---|---|---|",
+    "| # | Quelle | Start | Dauer | Ausschlag | Chatter | Chat sagt |",
+    "|---|---|---|---|---|---|---|",
     ...rows,
     "",
     ...eventsMarkdown(log, events),
   ].join("\n");
+}
+
+/** "★ Marker: Boss besiegt", "★ Marker + Chat", "Chat" */
+function sourceLabel(h: Highlight): string {
+  if (h.source === "chat") return "Chat";
+  const label = h.source === "marker+chat" ? "★ Marker + Chat" : "★ Marker";
+  return h.markers.length ? `${label}: ${h.markers.join(" / ")}` : label;
 }
 
 function eventsMarkdown(log: ChatLog, events: StreamEvent[]): string[] {

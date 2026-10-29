@@ -7,6 +7,7 @@ import { loadChat } from "./chat.ts";
 import { defaultOptions, findHighlights } from "./analyze.ts";
 import { collectEvents, isNotable, summarize } from "./events.ts";
 import { toConsole, toMarkdown } from "./format.ts";
+import { AUTH_FILE, fetchMarkers, type Marker } from "./twitch.ts";
 
 const usage = `Verwendung:
   npm run analyze -- <VOD-ID oder VOD-Link oder chat.json> [Optionen]
@@ -18,7 +19,11 @@ Optionen:
   --top <n>        Anzahl Highlights (Standard ${defaultOptions.top})
   --bucket <s>     Fenstergröße in Sekunden (Standard ${defaultOptions.bucketSeconds})
   --gap <s>        Mindestabstand zwischen Highlights (Standard ${defaultOptions.minGapSeconds})
+  --marker-lead <s>  Vorlauf vor einem Streamer-Marker (Standard ${defaultOptions.markerLeadSeconds})
   --out <ordner>   Ausgabeordner (Standard output)
+
+Nach \`npm run login\` werden bei VODs des eigenen Kanals die Stream-Marker
+mitgeladen und immer als Highlight übernommen (siehe README).
 `;
 
 async function main() {
@@ -28,6 +33,7 @@ async function main() {
       top: { type: "string" },
       bucket: { type: "string" },
       gap: { type: "string" },
+      "marker-lead": { type: "string" },
       out: { type: "string", default: "output" },
       help: { type: "boolean", short: "h" },
     },
@@ -49,12 +55,19 @@ async function main() {
   const log = await loadChat(chatPath);
   log.videoId ??= videoId;
 
-  const highlights = findHighlights(log, {
-    ...defaultOptions,
-    top: num(values.top, defaultOptions.top),
-    bucketSeconds: num(values.bucket, defaultOptions.bucketSeconds),
-    minGapSeconds: num(values.gap, defaultOptions.minGapSeconds),
-  });
+  const markers = log.videoId ? await loadMarkers(log.videoId) : [];
+
+  const highlights = findHighlights(
+    log,
+    {
+      ...defaultOptions,
+      top: num(values.top, defaultOptions.top),
+      bucketSeconds: num(values.bucket, defaultOptions.bucketSeconds),
+      minGapSeconds: num(values.gap, defaultOptions.minGapSeconds),
+      markerLeadSeconds: num(values["marker-lead"], defaultOptions.markerLeadSeconds),
+    },
+    markers,
+  );
 
   const events = collectEvents(log);
 
@@ -64,7 +77,7 @@ async function main() {
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, "highlights.json"),
-    JSON.stringify({ video: { id: log.videoId, title: log.title, channel: log.channel, length: log.length }, highlights, events: { summary: summarize(events), list: events.filter(isNotable) } }, null, 2),
+    JSON.stringify({ video: { id: log.videoId, title: log.title, channel: log.channel, length: log.length }, highlights, markers, events: { summary: summarize(events), list: events.filter(isNotable) } }, null, 2),
   );
   await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events));
   console.log(`Gespeichert: ${join(dir, "highlights.json")} und highlights.md`);
@@ -89,6 +102,22 @@ async function downloadChat(videoId: string, dir: string): Promise<string> {
     );
   }
   return target;
+}
+
+/** Stream-Marker sind optional: ohne Anmeldung oder bei fremden VODs geht es nur mit dem Chat weiter. */
+async function loadMarkers(videoId: string): Promise<Marker[]> {
+  if (!existsSync(AUTH_FILE)) {
+    console.log("Hinweis: Ohne `npm run login` werden keine Streamer-Marker berücksichtigt (siehe README).\n");
+    return [];
+  }
+  try {
+    const markers = await fetchMarkers(videoId);
+    console.log(`${markers.length} Streamer-Marker geladen.\n`);
+    return markers;
+  } catch (err: any) {
+    console.warn(`Streamer-Marker nicht geladen: ${err.message} Es geht nur mit dem Chat weiter.\n`);
+    return [];
+  }
 }
 
 function num(value: string | undefined, fallback: number): number {

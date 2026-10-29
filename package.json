@@ -4,6 +4,7 @@
   "description": "Findet Highlights in Twitch-VODs anhand des Chats",
   "scripts": {
     "analyze": "tsx src/cli.ts",
+    "login": "tsx src/login.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

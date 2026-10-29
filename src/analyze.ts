@@ -1,9 +1,10 @@
 import type { ChatLog, ChatMessage } from "./chat.ts";
+import type { Marker } from "./twitch.ts";
 
 export interface AnalyzeOptions {
   /** Breite eines Zeitfensters in Sekunden */
   bucketSeconds: number;
-  /** Anzahl Highlights, die ausgegeben werden */
+  /** Anzahl Chat-Highlights; Streamer-Marker kommen immer zusätzlich dazu */
   top: number;
   /** Mindestabstand zwischen zwei Highlights in Sekunden */
   minGapSeconds: number;
@@ -15,6 +16,10 @@ export interface AnalyzeOptions {
   baselineSeconds: number;
   /** Ab wie viel-facher Normalaktivität ein Fenster als Peak gilt */
   minScore: number;
+  /** Vorlauf vor einem Streamer-Marker (der Hotkey wird meist erst danach gedrückt) */
+  markerLeadSeconds: number;
+  /** Nachlauf nach einem Streamer-Marker */
+  markerTailSeconds: number;
 }
 
 export const defaultOptions: AnalyzeOptions = {
@@ -25,6 +30,8 @@ export const defaultOptions: AnalyzeOptions = {
   tailSeconds: 15,
   baselineSeconds: 300,
   minScore: 1.8,
+  markerLeadSeconds: 60,
+  markerTailSeconds: 30,
 };
 
 export interface Bucket {
@@ -38,13 +45,20 @@ export interface Bucket {
   score: number;
 }
 
+/** "marker": vom Streamer markiert, "chat": Chat-Peak, "marker+chat": beides im selben Clip */
+export type HighlightSource = "marker" | "chat" | "marker+chat";
+
 export interface Highlight {
   rank: number;
-  /** Peak-Zeitpunkt (Sekunden) */
+  source: HighlightSource;
+  /** Beschreibungen der Streamer-Marker im Clip (leer, wenn keine angegeben) */
+  markers: string[];
+  /** Zeitpunkt des Markers bzw. des Chat-Peaks (Sekunden) */
   peak: number;
   /** Vorgeschlagener Clip */
   start: number;
   end: number;
+  /** Stärkster Chat-Ausschlag im Clip */
   score: number;
   messages: number;
   chatters: number;
@@ -165,9 +179,15 @@ export function buildBuckets(log: ChatLog, opts: AnalyzeOptions = defaultOptions
   return buckets;
 }
 
-export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptions): Highlight[] {
+/**
+ * Streamer-Marker werden immer zu Highlights und stehen vorne. Danach folgen
+ * bis zu `top` Chat-Peaks; liegt ein Chat-Peak bei einem Marker, wird er in
+ * dessen Clip eingeschmolzen.
+ */
+export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptions, markers: Marker[] = []): Highlight[] {
   const buckets = buildBuckets(log, opts);
-  const length = log.length ?? (buckets.at(-1)!.start + opts.bucketSeconds);
+  const length = log.length ?? Math.max(buckets.at(-1)!.start + opts.bucketSeconds, ...markers.map((m) => m.offset));
+  const indexAt = (seconds: number) => Math.max(0, Math.min(buckets.length - 1, Math.floor(seconds / opts.bucketSeconds)));
 
   // Ein Highlight braucht relativ (Score) und absolut (Aktivität) genug Ausschlag.
   const minActivity = Math.max(3, median(buckets.map((b) => b.activity)));
@@ -182,6 +202,9 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
     while (from > 0 && buckets[from - 1].score >= opts.minScore && b.start - buckets[from - 1].start < 60) from--;
     while (to < buckets.length - 1 && buckets[to + 1].score >= opts.minScore && buckets[to + 1].start - b.start < 60) to++;
     return {
+      source: "chat",
+      markers: [],
+      anchor: b.start,
       peak: b,
       from,
       to,
@@ -190,19 +213,27 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
     };
   };
 
+  const markerClipOf = (m: Marker): Clip => {
+    const start = Math.max(0, m.offset - opts.markerLeadSeconds);
+    const end = Math.min(length, m.offset + opts.markerTailSeconds);
+    const from = indexAt(start);
+    const to = Math.max(from, indexAt(end - 1));
+    // Für Score und Chatter zählt die stärkste Chat-Reaktion im Clip.
+    const peak = buckets.slice(from, to + 1).reduce((best, b) => (b.score > best.score ? b : best));
+    return { source: "marker", markers: m.description ? [m.description] : [], anchor: m.offset, peak, from, to, start, end };
+  };
+
   // Liegt ein Kandidat zu nah an einem gewählten Highlight oder überlappen
   // sich die Clips, wird er in dieses Highlight eingeschmolzen statt doppelt
-  // aufzutauchen. Der stärkere Peak bleibt der Peak.
+  // aufzutauchen. Der Zeitpunkt des zuerst gewählten bleibt.
   const near = (a: Clip, b: Clip) =>
-    Math.abs(a.peak.start - b.peak.start) < opts.minGapSeconds || (a.start < b.end && b.start < a.end);
+    Math.abs(a.anchor - b.anchor) < opts.minGapSeconds || (a.start < b.end && b.start < a.end);
   const picked: Clip[] = [];
-  for (const c of candidates) {
-    if (picked.length >= opts.top) break;
-    const clip = clipOf(c);
+  const add = (clip: Clip) => {
     const first = picked.find((p) => near(p, clip));
     if (!first) {
       picked.push(clip);
-      continue;
+      return;
     }
     let host: Clip = first;
     merge(host, clip);
@@ -214,6 +245,12 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
       picked.splice(picked.indexOf(drop), 1);
       host = keep;
     }
+  };
+
+  for (const m of [...markers].sort((a, b) => a.offset - b.offset)) add(markerClipOf(m));
+  for (const c of candidates) {
+    if (picked.filter((p) => p.source === "chat").length >= opts.top) break;
+    add(clipOf(c));
   }
 
   return picked.map((clip, i) => {
@@ -224,7 +261,9 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
 
     return {
       rank: i + 1,
-      peak: b.start,
+      source: clip.source,
+      markers: clip.markers,
+      peak: clip.anchor,
       start: clip.start,
       end: clip.end,
       score: round(b.score),
@@ -237,7 +276,11 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
 }
 
 interface Clip {
-  /** Stärkstes Fenster des Clips */
+  source: HighlightSource;
+  markers: string[];
+  /** Zeitpunkt des Markers bzw. Chat-Peaks, nach dem der Clip benannt ist */
+  anchor: number;
+  /** Stärkstes Chat-Fenster des Clips */
   peak: Bucket;
   /** Index des ersten und letzten Fensters in buckets */
   from: number;
@@ -246,8 +289,11 @@ interface Clip {
   end: number;
 }
 
-/** Erweitert `host` um `other`; der Peak von `host` bleibt (er wurde zuerst gewählt). */
+/** Erweitert `host` um `other`; der Zeitpunkt von `host` bleibt (er wurde zuerst gewählt). */
 function merge(host: Clip, other: Clip): void {
+  if (host.source !== other.source) host.source = "marker+chat";
+  host.markers = [...host.markers, ...other.markers];
+  if (other.peak.score > host.peak.score) host.peak = other.peak;
   host.from = Math.min(host.from, other.from);
   host.to = Math.max(host.to, other.to);
   host.start = Math.min(host.start, other.start);
