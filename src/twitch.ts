@@ -4,8 +4,20 @@ import { readFile, writeFile } from "node:fs/promises";
 /** Lokale Anmeldedaten, siehe .gitignore. Nicht weitergeben. */
 export const AUTH_FILE = ".twitch-auth.json";
 
+/**
+ * Client-ID der gemeinsamen Twitch-App von stream-highlights. Client-IDs sind
+ * laut Twitch öffentlich, und die Anmeldung per Gerätecode braucht kein
+ * Secret. So muss nicht jeder Streamer eine eigene App registrieren.
+ */
+export const DEFAULT_CLIENT_ID = "srajx2qq27l3oeu4trgh9hy9gl4g2j";
+
+/** Eigene Client-ID (Eingabe oder TWITCH_CLIENT_ID), sonst die gemeinsame App. */
+export function resolveClientId(custom?: string): string {
+  return custom?.trim() || process.env.TWITCH_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID;
+}
+
 /** Reicht zum Lesen der Stream-Marker des eigenen Kanals. */
-const SCOPES = "channel:read:broadcast";
+const SCOPES = "user:read:broadcast";
 const DEVICE_URL = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL = "https://id.twitch.tv/oauth2/token";
 const VALIDATE_URL = "https://id.twitch.tv/oauth2/validate";

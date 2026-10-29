@@ -1,12 +1,13 @@
 import { parseArgs } from "node:util";
-import { AUTH_FILE, loadAuth, startLogin } from "./twitch.ts";
+import { AUTH_FILE, DEFAULT_CLIENT_ID, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 
 const usage = `Verwendung:
-  npm run login -- --client-id <Client-ID deiner Twitch-App>
+  npm run login [-- --client-id <Client-ID einer eigenen Twitch-App>]
 
 Meldet dich mit deinem Streamer-Konto bei Twitch an, damit beim Analysieren
-deine Stream-Marker mitgeladen werden. Einrichtung siehe README.
-Die Client-ID wird gespeichert; bei einer erneuten Anmeldung reicht \`npm run login\`.
+deine Stream-Marker mitgeladen werden. Ohne --client-id wird die gemeinsame
+App von stream-highlights verwendet; eine einmal angegebene eigene
+Client-ID wird gespeichert und bei der nächsten Anmeldung wiederverwendet.
 `;
 
 async function main() {
@@ -16,11 +17,8 @@ async function main() {
     return;
   }
 
-  const clientId = values["client-id"] ?? process.env.TWITCH_CLIENT_ID ?? (await loadAuth())?.clientId;
-  if (!clientId) {
-    console.log(usage);
-    process.exit(1);
-  }
+  const saved = (await loadAuth())?.clientId;
+  const clientId = resolveClientId(values["client-id"] ?? (saved !== DEFAULT_CLIENT_ID ? saved : undefined));
 
   const pending = await startLogin(clientId);
   console.log(`Öffne ${pending.verificationUri}`);

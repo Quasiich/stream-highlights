@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseTwitchDownloader } from "../src/chat.ts";
 import { defaultOptions, findHighlights } from "../src/analyze.ts";
-import { fetchMarkers, parseMarkers } from "../src/twitch.ts";
+import { DEFAULT_CLIENT_ID, fetchMarkers, parseMarkers, resolveClientId } from "../src/twitch.ts";
 
 /** Ruhiger 2-Stunden-Chat mit einem einzigen Chat-Peak bei 0:30:00. */
 function chat() {
@@ -105,4 +105,15 @@ test("fetchMarkers meldet fremde VODs verständlich", async (t) => {
   await writeFile(authPath, JSON.stringify({ clientId: "cid", accessToken: "a", refreshToken: "r", login: "streamer" }));
   t.mock.method(globalThis, "fetch", async () => Response.json({ message: "user is not authorized" }, { status: 403 }));
   await assert.rejects(fetchMarkers("999", authPath), /403.*angemeldeten Kanals \(streamer\)/);
+});
+
+test("resolveClientId nimmt eigene ID, dann TWITCH_CLIENT_ID, sonst die gemeinsame App", (t) => {
+  const before = process.env.TWITCH_CLIENT_ID;
+  t.after(() => (before === undefined ? delete process.env.TWITCH_CLIENT_ID : (process.env.TWITCH_CLIENT_ID = before)));
+  delete process.env.TWITCH_CLIENT_ID;
+  assert.equal(resolveClientId(), DEFAULT_CLIENT_ID);
+  assert.equal(resolveClientId("  "), DEFAULT_CLIENT_ID);
+  process.env.TWITCH_CLIENT_ID = "aus-env";
+  assert.equal(resolveClientId(), "aus-env");
+  assert.equal(resolveClientId(" eigene "), "eigene");
 });

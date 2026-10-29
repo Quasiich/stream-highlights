@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { defaultOptions } from "./analyze.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { findTwitchDownloader } from "./tools.ts";
-import { AUTH_FILE, fetchVods, loadAuth, startLogin } from "./twitch.ts";
+import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 
 export const PORT = 4777;
 
@@ -72,7 +72,8 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     const auth = await loadAuth();
     return send(res, 200, {
       twitch: auth ? { login: auth.login ?? null } : null,
-      clientId: auth?.clientId ?? null,
+      // Nur eine eigene Client-ID zurückgeben, die gemeinsame App braucht keine Eingabe
+      clientId: auth && auth.clientId !== DEFAULT_CLIENT_ID ? auth.clientId : null,
       downloader: Boolean(findTwitchDownloader()),
       running: job && !job.finished ? { id: job.id, input: job.input } : null,
       defaults: {
@@ -158,9 +159,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
 
   if (path === "/api/login" && req.method === "POST") {
     const body = await readJson(req);
-    const clientId = String(body.clientId ?? "").trim() || (await loadAuth())?.clientId;
-    if (!clientId) return send(res, 400, { error: "Bitte die Client-ID deiner Twitch-App angeben." });
-    const pending = await startLogin(clientId);
+    const pending = await startLogin(resolveClientId(String(body.clientId ?? "")));
     login = { state: "pending", userCode: pending.userCode, verificationUri: pending.verificationUri };
     pending.done.then(
       () => (login = { state: "done" }),

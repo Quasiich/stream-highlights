@@ -87,41 +87,37 @@ auf jeden Fall in die Highlights sollen. Das Programm nutzt dafür die
 eingebaute **Stream-Marker**-Funktion von Twitch: Die Marker werden am VOD
 gespeichert und beim Analysieren über die Twitch-API abgerufen.
 
-### Einmalig einrichten
+### Mit Twitch verbinden
 
-Das musst du als Streamer selbst erledigen. Es dauert etwa 5 Minuten.
+Einmalig, dauert eine Minute:
 
-1. **Zwei-Faktor-Authentifizierung** für dein Twitch-Konto einschalten
-   (Twitch → Einstellungen → Sicherheit und Privatsphäre). Ohne 2FA lässt
-   Twitch dich keine App registrieren.
-2. **Twitch-App registrieren:** https://dev.twitch.tv/console/apps öffnen,
-   mit deinem Twitch-Konto anmelden und auf „Ihre Anwendung registrieren“
-   klicken. Ausfüllen:
-   - **Name:** beliebig, muss aber auf Twitch eindeutig sein, z. B.
-     `stream-highlights-<dein-kanal>`
-   - **OAuth-Redirect-URLs:** `http://localhost:3000` eintragen und auf
-     „Hinzufügen“ klicken (wird nicht benutzt, Twitch verlangt aber einen
-     Eintrag)
-   - **Kategorie:** z. B. „Application Integration“
-   - **Client-Typ:** „Öffentlich“, falls gefragt
-3. Nach „Erstellen“ bei der App auf **„Verwalten“** klicken und die
-   **Client-ID** kopieren. Ein Client-Secret brauchst du nicht.
-4. **Verbinden:** In der Oberfläche oben rechts auf **Mit Twitch verbinden**
-   klicken, die Client-ID einfügen und auf „Weiter“ klicken. Es öffnet sich
-   https://www.twitch.tv/activate und das Programm zeigt einen kurzen Code an.
-   Melde dich dort mit **dem Konto des Kanals** an, dessen VODs du analysieren
-   willst, gib den Code ein und bestätige. Oben rechts steht dann
-   „Verbunden als …“.
+1. In der Oberfläche oben rechts auf **Mit Twitch verbinden** und dann auf
+   **Verbinden** klicken.
+2. Es öffnet sich https://www.twitch.tv/activate und das Programm zeigt einen
+   kurzen Code an. Melde dich dort mit **dem Konto des Kanals** an, dessen
+   VODs du analysieren willst, gib den Code ein und bestätige.
+3. Oben rechts steht dann „Verbunden als …“.
 
-   Ohne Oberfläche geht dasselbe im Projektordner mit
-   `npm run login -- --client-id DEINE_CLIENT_ID`.
+Ohne Oberfläche geht dasselbe im Projektordner mit `npm run login`.
 
-Die Anmeldung landet in `.twitch-auth.json` im Programmordner. Die Datei wird
-nicht auf GitHub hochgeladen. Gib sie auch sonst nicht weiter, denn sie
-erlaubt das Lesen deiner Kanal-Einstellungen. Das Programm erneuert die
-Anmeldung selbst. Erst wenn es 30 Tage nicht benutzt wurde, musst du dich
-erneut verbinden (die Client-ID ist dann schon eingetragen). Über
-**Trennen** oben rechts wird die Anmeldung gelöscht.
+Das Programm bekommt dabei nur Leserechte (`user:read:broadcast`): Es kann
+deine Stream-Marker und Kanal-Einstellungen lesen, aber nichts ändern. Die
+Anmeldung landet in `.twitch-auth.json` im Programmordner. Die Datei wird
+nicht auf GitHub hochgeladen. Gib sie auch sonst nicht weiter. Das Programm
+erneuert die Anmeldung selbst. Erst wenn es 30 Tage nicht benutzt wurde,
+musst du dich erneut verbinden. Über **Trennen** oben rechts wird die
+Anmeldung gelöscht.
+
+#### Eigene Twitch-App (optional)
+
+Standardmäßig nutzt das Programm die gemeinsame Twitch-App von
+stream-highlights. Wer lieber eine eigene App verwenden will, registriert sie
+auf https://dev.twitch.tv/console/apps (dafür ist 2FA im Twitch-Konto nötig):
+eindeutiger Name, OAuth-Redirect-URL `http://localhost:3000`, Kategorie
+„Application Integration“, Client-Typ **„Öffentlich“**. Die Client-ID trägt
+man dann beim Verbinden unter „Eigene Twitch-App verwenden“ ein, oder
+`npm run login -- --client-id DEINE_CLIENT_ID`, oder setzt die
+Umgebungsvariable `TWITCH_CLIENT_ID`.
 
 ### Marker im Stream setzen
 

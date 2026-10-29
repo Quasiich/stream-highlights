@@ -11,15 +11,18 @@ async function main() {
   const packaged = sea.isSea();
   if (packaged) process.chdir(dirname(process.execPath));
   const html = packaged ? async () => sea.getAsset("index.html", "utf8") : readHtmlFromDisk;
-  const url = `http://localhost:${PORT}`;
+  // --port 4778 z. B. für eine zweite Instanz neben einer laufenden
+  const portArg = process.argv.indexOf("--port");
+  const port = portArg > 0 ? Number(process.argv[portArg + 1]) || PORT : PORT;
+  const url = `http://localhost:${port}`;
 
   try {
-    await startServer(html);
+    await startServer(html, port);
   } catch (err: any) {
     if (err.code === "EADDRINUSE") {
       // Läuft schon (z. B. doppelt gestartet): einfach die Seite öffnen.
       console.log(`stream-highlights läuft bereits: ${url}`);
-      openUrl(url);
+      if (!process.argv.includes("--no-open")) openUrl(url);
       return;
     }
     throw err;

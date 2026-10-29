@@ -172,8 +172,6 @@
   }
   dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .code { font: 700 30px/1 ui-monospace, Consolas, monospace; letter-spacing: .12em; text-align: center; padding: 16px; background: var(--panel-2); border-radius: 8px; margin: 12px 0; }
-  ol.setup { padding-left: 20px; margin: 8px 0 14px; font-size: 14px; }
-  ol.setup li { margin: 4px 0; }
   .dialog-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
   .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
 </style>
@@ -257,18 +255,18 @@
 <dialog id="loginDialog">
   <div id="loginSetup">
     <h2>Mit Twitch verbinden</h2>
-    <p class="small muted">Damit werden die Stream-Marker berücksichtigt, die du während des Streams per Hotkey setzt. Einmalig nötig:</p>
-    <ol class="setup">
-      <li>Zwei-Faktor-Authentifizierung in deinem Twitch-Konto einschalten.</li>
-      <li>Auf <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener">dev.twitch.tv/console/apps</a> eine Anwendung registrieren: beliebiger eindeutiger Name, Redirect-URL <code>http://localhost:3000</code>, Client-Typ „Öffentlich“.</li>
-      <li>Bei der App auf „Verwalten“ klicken und die Client-ID hier einfügen:</li>
-    </ol>
-    <label class="small muted" for="clientId">Client-ID</label>
-    <input type="text" id="clientId" autocomplete="off" spellcheck="false">
+    <p class="small">Damit werden die Stream-Marker berücksichtigt, die du während des Streams per Hotkey setzt, und unter „Deine VODs“ erscheinen deine letzten Streams.</p>
+    <p class="small muted">Nach „Verbinden“ öffnet sich twitch.tv/activate. Melde dich dort mit dem Konto deines Kanals an und bestätige den Code, der hier angezeigt wird. Das Programm kann damit nur deine Kanal-Einstellungen und Marker lesen, nichts ändern.</p>
+    <details id="customApp">
+      <summary>Eigene Twitch-App verwenden (optional)</summary>
+      <p class="small muted">Nur nötig, wenn du statt der App von stream-highlights eine eigene nutzen willst. Feld leer lassen für die Standard-App.</p>
+      <label class="small muted" for="clientId">Client-ID deiner App</label>
+      <input type="text" id="clientId" autocomplete="off" spellcheck="false">
+    </details>
     <div id="loginError" class="error-box hidden" role="alert"></div>
     <div class="dialog-actions">
       <button class="btn" data-close>Abbrechen</button>
-      <button class="btn primary" id="loginStart">Weiter</button>
+      <button class="btn primary" id="loginStart">Verbinden</button>
     </div>
   </div>
   <div id="loginWait" class="hidden">
@@ -314,7 +312,10 @@ async function refreshStatus() {
   $("twitchDot").classList.toggle("on", connected);
   $("twitchText").textContent = connected ? "Verbunden als " + (status.twitch.login || "?") : "Twitch nicht verbunden";
   $("twitchBtn").textContent = connected ? "Trennen" : "Mit Twitch verbinden";
-  if (status.clientId && !$("clientId").value) $("clientId").value = status.clientId;
+  if (status.clientId && !$("clientId").value) {
+    $("clientId").value = status.clientId;
+    $("customApp").open = true;
+  }
   for (const [key, el] of [["top", "optTop"], ["gap", "optGap"], ["bucket", "optBucket"], ["markerLead", "optMarkerLead"]]) {
     if (!$(el).value) $(el).value = status.defaults[key];
   }
