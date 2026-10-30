@@ -115,6 +115,8 @@ export async function runAutomation(
   s: AutomationSettings,
   log: (line: string) => void,
   outDir = OUTPUT_DIR,
+  /** Fortschritt des Clip-Schnitts, für die Oberfläche */
+  onProgress: (p: Progress) => void = () => {},
 ): Promise<void> {
   if (s.discord.enabled) {
     try {
@@ -131,7 +133,7 @@ export async function runAutomation(
   }
   try {
     log(`Schneide ${Math.min(s.clips.count, report.highlights.length)} Clips aus dem VOD …`);
-    const clips = await makeClips(report, dir, s.clips, outDir, () => {}, (line) => log(`Clips: ${line}`));
+    const clips = await makeClips(report, dir, s.clips, outDir, onProgress, (line) => log(`Clips: ${line}`));
     const folder = clipFolder(report, s.clips, outDir);
     log(`${clips.length} Clips gespeichert in ${folder}`);
     if (s.discord.enabled && clips.length) {

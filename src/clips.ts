@@ -57,6 +57,19 @@ const MIN_CLIP_SECONDS = 5;
 /** Beim Kürzen bleibt so viel der Länge vor dem Peak, der Chat reagiert ja verzögert */
 const LEAD_SHARE = 0.75;
 
+/**
+ * Grobe Dauer des Clip-Schnitts in Sekunden, bevor die Highlights feststehen:
+ * je Clip etwa 2 s Start plus Download. Unter Windows gemessen (720p): zwei
+ * 60-s-Clips zusammen 6 s, drei Clips von je knapp 3 Minuten 15 s. Erkannte
+ * Highlights sind meist lang, im Modus "highlight" wird daher mit 2 Minuten
+ * gerechnet. Während des Schnitts rechnet die Oberfläche mit dem echten
+ * Fortschritt weiter.
+ */
+export function estimateClipSeconds(s: ClipSettings, ffmpegMissing = false): number {
+  const length = s.mode === "fixed" ? s.lengthSeconds : Math.min(s.maxLengthSeconds, 120 + 2 * s.paddingSeconds);
+  return s.count * (2 + length * 0.02) + (ffmpegMissing ? 30 : 0);
+}
+
 export interface ClipRange {
   rank: number;
   start: number;

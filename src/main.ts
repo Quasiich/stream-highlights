@@ -52,9 +52,18 @@ async function main() {
   if (packaged && (openBrowser || updated) && !process.argv.includes("--no-minimize")) minimizeOwnConsole(updated);
 
   // Live-Mitschnitt sauber schließen; SIGHUP kommt unter Windows beim Schließen des Fensters.
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(signal, () => void shutdownLive().finally(() => process.exit(0)));
-  }
+  // Hängt das Schließen (z. B. Verbindung zu Twitch), beendet es sich trotzdem:
+  // nach spätestens 3 s, oder sofort beim zweiten Strg+C.
+  let stopping = false;
+  const stop = () => {
+    if (stopping) process.exit(0);
+    stopping = true;
+    console.log("Beende …");
+    setTimeout(() => process.exit(0), 3000).unref();
+    void shutdownLive().finally(() => process.exit(0));
+  };
+  // SIGBREAK: Strg+Pause unter Windows
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const) process.on(signal, stop);
 
   void checkForUpdate().then((info) => {
     if (info.available) console.log(`Neue Version ${info.latest} verfügbar. In der Oberfläche auf „Jetzt aktualisieren“ klicken.`);

@@ -270,3 +270,15 @@ test("LiveRecorder holt die Optionen erst zur Auswertung (geänderte Einstellung
   assert.equal(asked, 1);
   assert.equal(result.report.events.minimums.raidViewers, 999, "Schwelle aus den aktuellen Optionen");
 });
+
+test("LiveRecorder meldet den Fortschritt der Auswertung nach Stream-Ende", async (t) => {
+  const { opts, done } = await setup(t);
+  const stages: string[] = [];
+  const rec = new LiveRecorder("42", "streamer", { ...opts, onProgress: (p) => stages.push(p.stage) }, () => Date.parse(at(5)));
+  await rec.handle("stream.online", { broadcaster_user_id: "42", id: "900", type: "live", started_at: at(0) }, at(1));
+  await rec.handle("channel.chat.message", chat("hallo"), at(10));
+  await rec.handle("stream.offline", { broadcaster_user_id: "42" }, at(3600));
+  await done;
+  assert.equal(stages[0], "chat", "zuerst die VOD-Suche");
+  assert.ok(stages.includes("analyze"), "dann die Auswertung");
+});

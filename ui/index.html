@@ -120,6 +120,10 @@
   .estimate.warn { background: var(--error-soft); color: var(--error); }
   .progress-eta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; margin-top: 12px; }
   .progress-eta strong { font-variant-numeric: tabular-nums; }
+  .live-voice { margin-top: 4px; }
+  .live-voice:has(input:disabled) { color: var(--muted); }
+  .live-progress .progress-eta { font-size: 13px; margin-top: 8px; }
+  .live-progress .progress-bar { margin: 6px 0 0; }
   .check { display: flex !important; align-items: center; gap: 8px; grid-template-columns: none; }
   .chip {
     display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
@@ -282,10 +286,16 @@
     <div class="panel" id="livePanel">
       <h2>Live-Mitschnitt</h2>
       <label class="check small"><input type="checkbox" id="liveToggle"> Chat meiner Streams automatisch mitschreiben</label>
+      <label class="check small live-voice"><input type="checkbox" id="liveVoice"> Ton auswerten (Sprache &amp; Lautstärke)</label>
       <div class="live-state hidden" id="liveState"><span class="dot" id="liveDot"></span><span id="liveText"></span></div>
+      <div class="live-progress hidden" id="liveProgress">
+        <div class="progress-eta"><span id="liveStep"></span><strong id="liveLeft"></strong></div>
+        <div class="progress-bar" id="liveBar"><div></div></div>
+      </div>
       <p class="side-note" id="liveInfo">
-        Optional. Solange dieses Programm läuft, schreibt es den Chat deiner Streams mit und analysiert ihn direkt nach
-        dem Stream-Ende, ganz ohne Chat-Download. Der PC muss dafür während des Streams laufen.
+        Optional. Solange dieses Programm läuft, schreibt es den Chat deiner Streams mit und wertet den Stream direkt
+        nach dem Ende aus, ganz ohne Chat-Download. Mit „Ton auswerten“ kommen Sprache und Lautstärke dazu: Die
+        Tonspur lädt das Programm dafür nach dem Stream aus dem VOD. Der PC muss während des Streams laufen.
         <span id="liveNeedsLogin" class="hidden"><br>Dafür zuerst mit Twitch verbinden.</span>
       </p>
       <div id="liveLast" class="side-note hidden"></div>
@@ -558,6 +568,8 @@ function readVoice() {
 }
 
 function renderVoiceBox() {
+  // Derselbe Schalter steht als „Ton auswerten“ auch beim Live-Mitschnitt
+  $("liveVoice").checked = $("voiceEnabled").checked;
   $("voiceBody").classList.toggle("hidden", !$("voiceEnabled").checked);
   for (const el of $("loudOptions").querySelectorAll("input")) el.disabled = !$("voiceLoud").checked;
   $("loudHelp").classList.toggle("muted", !$("voiceLoud").checked);
@@ -565,6 +577,12 @@ function renderVoiceBox() {
 }
 
 for (const id of ["voiceEnabled", "voiceLoud"]) $(id).addEventListener("change", renderVoiceBox);
+$("liveVoice").addEventListener("change", () => {
+  $("voiceEnabled").checked = $("liveVoice").checked;
+  renderVoiceBox();
+  saveVoiceSoon();
+  refreshLive().catch(() => {});
+});
 $("voiceModel").addEventListener("change", () => scheduleEstimate());
 $("vodInput").addEventListener("input", () => scheduleEstimate(600));
 
@@ -1245,22 +1263,39 @@ function liveText(live) {
     case "waiting": return "Bereit, wartet auf deinen nächsten Stream" + (live.channel ? " (" + live.channel + ")" : "") + ".";
     case "recording":
       return "Stream läuft seit " + timeOfDay(live.stream.startedAt) + " Uhr, " + live.stream.messages.toLocaleString("de-DE") + " Nachrichten mitgeschrieben." +
-        (live.connected ? "" : " Verbindung unterbrochen, verbinde neu …");
+        (live.connected ? "" : " Verbindung unterbrochen, verbinde neu …") +
+        ($("voiceEnabled").checked ? " Der Ton wird nach dem Stream aus dem VOD ausgewertet." : "");
     case "ending": return "Stream ist offline. Auswertung um " + timeOfDay(live.analyzeAt) + " Uhr, falls er nicht weiterläuft.";
     case "analyzing": return "Werte den Stream aus …";
     default: return "";
   }
 }
+/** Auswertung nach Stream-Ende: Schritt mit Prozent und Restzeit bis alles (inkl. Clips) fertig ist */
+function renderLiveProgress(p) {
+  $("liveProgress").classList.toggle("hidden", !p);
+  if (!p) return;
+  // Die Meldungen sagen selbst, was gerade passiert („Whisper erkennt Sprache …“, „Clip 2/5 …“)
+  $("liveStep").textContent = p.message.replace(/ …$/, "") + (p.percent !== undefined ? ": " + p.percent + " %" : "");
+  $("liveLeft").textContent = p.totalEta !== undefined ? "noch ca. " + duration(p.totalEta) : p.percent !== undefined ? "Restzeit wird berechnet …" : "";
+  const bar = $("liveBar");
+  bar.classList.toggle("indeterminate", p.percent === undefined);
+  bar.firstElementChild.style.width = (p.percent ?? 0) + "%";
+}
+
+let liveAnalyzing = false;
 async function refreshLive() {
   const live = await api("/api/live");
+  liveAnalyzing = live.state === "analyzing";
   $("liveToggle").checked = live.enabled;
   $("liveToggle").disabled = !status?.twitch && !live.enabled;
+  $("liveVoice").disabled = !live.enabled;
   $("liveInfo").classList.toggle("hidden", live.enabled);
   $("liveNeedsLogin").classList.toggle("hidden", Boolean(status?.twitch));
   const text = liveText(live);
   $("liveState").classList.toggle("hidden", !text);
   $("liveText").textContent = text;
   $("liveDot").className = "dot" + (live.state === "recording" ? " rec" : live.connected ? " on" : "");
+  renderLiveProgress(live.state === "analyzing" ? live.progress : null);
   const error = live.state === "error" ? live.message || "Live-Mitschnitt läuft nicht." : live.enabled ? "" : liveToggleError;
   $("liveError").textContent = error;
   $("liveError").classList.toggle("hidden", !error);
@@ -1295,7 +1330,10 @@ $("liveToggle").addEventListener("change", async () => {
   }
   await refreshLive();
 });
-setInterval(() => refreshLive().catch(() => {}), 5000);
+// Während der Auswertung öfter, damit Prozent und Restzeit flüssig laufen
+(function pollLive() {
+  setTimeout(() => refreshLive().catch(() => {}).finally(pollLive), liveAnalyzing ? 1500 : 5000);
+})();
 
 // ---- Update -------------------------------------------------------------
 // Nie automatisch: Die Seite zeigt nur an, dass es ein Update gibt; installiert

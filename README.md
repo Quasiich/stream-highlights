@@ -240,12 +240,19 @@ Es gibt zwei Wege, je nachdem, wo das Programm laufen soll:
   Einstellung wird gemerkt (`settings.json` im Programmordner) und gilt beim
   nächsten Start wieder. Die Schwellen und erweiterten Einstellungen, die beim
   Einschalten eingetragen sind, gelten auch für die automatischen
-  Auswertungen. **Sprache & Lautstärke** dagegen gilt immer so, wie es gerade
-  in der Oberfläche eingestellt ist: Jede Änderung wird sofort gespeichert und
-  von der nächsten Auswertung nach Stream-Ende übernommen, auch mitten im
-  Stream. Ist es eingeschaltet, lädt das Programm nach dem Stream die Tonspur
-  des VODs und lässt Whisper laufen (bei einer Nvidia-Karte etwa 2 Minuten pro
-  Stunde Stream), danach folgen wie eingestellt Discord und Clips.
+  Auswertungen.
+
+  Darunter lässt sich **Ton auswerten (Sprache & Lautstärke)** getrennt
+  dazuschalten. Das ist derselbe Schalter wie „Sprache & Lautstärke“ bei der
+  VOD-Analyse und gilt immer so, wie er gerade steht: Jede Änderung wird
+  sofort gespeichert und von der nächsten Auswertung nach Stream-Ende
+  übernommen, auch mitten im Stream. Der Ton wird nicht live aufgenommen,
+  sondern nach dem Stream aus dem VOD geladen und von Whisper ausgewertet (bei
+  einer Nvidia-Karte etwa 2 Minuten pro Stunde Stream). Danach folgen wie
+  eingestellt Discord und Clips.
+
+  Während der Auswertung zeigt der Kasten den aktuellen Schritt mit Prozent
+  und die geschätzte Restzeit bis alles fertig ist, Clips eingerechnet.
 - **Auf einem Server (z. B. VPS), ohne dass dein PC laufen muss:**
   `npm run live`, siehe [unten](#auf-einem-server).
 

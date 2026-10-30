@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AnalyzeOptions } from "./analyze.ts";
 import { type ChatMessage, LIVE_FORMAT, type LiveChatFile } from "./chat.ts";
-import { type AnalysisResult, runAnalysis } from "./pipeline.ts";
+import { type AnalysisResult, type Progress, runAnalysis } from "./pipeline.ts";
 import { AUTH_FILE, fetchLiveStream, findVodForStream, type LiveStream, type Vod } from "./twitch.ts";
 
 /** Ein Abschnitt des Streams, in dem der Mitschnitt nicht verbunden war (Sekunden seit Stream-Beginn) */
@@ -48,6 +48,8 @@ export interface RecorderOptions {
   log: (line: string) => void;
   /** Wird nach jeder fertigen Analyse aufgerufen (Discord, Clips), mit dem Protokoll des Mitschnitts */
   onFinished?: (result: AnalysisResult, log: (line: string) => void) => void | Promise<void>;
+  /** Fortschritt der Auswertung nach Stream-Ende (VOD-Suche, Chat, Sprache), für die Oberfläche */
+  onProgress?: (p: Progress) => void;
 }
 
 /** Sekunden zwischen zwei Zeitpunkten (ISO bzw. ms) */
@@ -316,6 +318,8 @@ export class LiveRecorder {
     this.finalizing.add(streamId);
     const { log } = this.opts;
     try {
+      const progress = this.opts.onProgress ?? (() => {});
+      progress({ stage: "chat", message: "Suche das VOD zum Stream …" });
       const vod = await this.findVod(streamId);
       if (!vod) log(`Kein VOD zu Stream ${streamId} gefunden (VODs abgeschaltet?). Werte nur den Chat aus.`);
 
@@ -329,7 +333,7 @@ export class LiveRecorder {
       let result: AnalysisResult | undefined;
       if (vod && missing > this.opts.maxGapSeconds) {
         log(`Im Mitschnitt fehlen ${Math.round(missing / 60)} min, lade den vollständigen Chat von VOD ${vod.id}.`);
-        result = await runAnalysis(vod.id, analyze, () => {}, this.opts.outDir).catch((err) => {
+        result = await runAnalysis(vod.id, analyze, progress, this.opts.outDir).catch((err) => {
           log(`Chat-Download fehlgeschlagen (${err.message}), nehme den Mitschnitt.`);
           return undefined;
         });
@@ -343,7 +347,7 @@ export class LiveRecorder {
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "chat.json"), JSON.stringify(file));
         if (missing > 0) log(`Hinweis: Im Mitschnitt fehlen insgesamt ${Math.round(missing)} s.`);
-        result = await runAnalysis(join(dir, "chat.json"), analyze, () => {}, this.opts.outDir);
+        result = await runAnalysis(join(dir, "chat.json"), analyze, progress, this.opts.outDir);
       }
 
       // Der Chat steckt jetzt in output/<id>/chat.json.

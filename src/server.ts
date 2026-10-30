@@ -6,11 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
 import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendHighlights, webhookList } from "./automation.ts";
 import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
+import { estimateClipSeconds } from "./clips.ts";
 import { type LiveService, startLive } from "./livemode.ts";
+import { LiveProgress } from "./liveprogress.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
 import { loadSettings, updateSettings } from "./settings.ts";
-import { findTwitchDownloader } from "./tools.ts";
+import { findFfmpeg, findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVod, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 import { defaultVoiceOptions, parseVoiceOptions, type VoiceOptions, WHISPER_MODELS, type WhisperModel } from "./voice.ts";
 import { detectGpu, estimateVoice } from "./whisper.ts";
@@ -39,6 +41,10 @@ const live: {
 } = { enabled: false };
 /** Neuer Versuch, wenn der Live-Mitschnitt nicht starten konnte (z. B. kein Internet beim Hochfahren) */
 const LIVE_RETRY_MS = 60_000;
+/** Fortschritt der automatischen Auswertung nach Stream-Ende */
+const liveProgress = new LiveProgress();
+/** Geschätzte Sekunden für den Clip-Schnitt nach der Auswertung, 0 wenn er aus ist */
+let liveClipSeconds = 0;
 
 let login: { state: "idle" | "pending" | "done" | "error"; userCode?: string; verificationUri?: string; error?: string } = {
   state: "idle",
@@ -400,7 +406,15 @@ async function restartIntoNewVersion(): Promise<void> {
 // ---- Live-Mitschnitt ------------------------------------------------------
 
 function liveStatus() {
-  if (live.service) return { enabled: true, ...live.service.status() };
+  if (live.service) {
+    const status = live.service.status();
+    // Nach der Auswertung beginnt die nächste wieder bei null
+    if (status.state !== "analyzing") {
+      liveProgress.reset();
+      liveClipSeconds = 0;
+    }
+    return { enabled: true, ...status, progress: liveProgress.get() };
+  }
   const state = !live.enabled ? "off" : live.starting ? "connecting" : "error";
   return { enabled: live.enabled, state, message: live.error, connected: false, log: [] };
 }
@@ -446,14 +460,25 @@ async function restartLive(throwErrors = false): Promise<void> {
       currentAnalyze: async () => {
         const options = analyzeOptions(live.options ?? {});
         const voice = (await loadSettings()).voice;
+        // Der Clip-Schnitt kommt danach und zählt schon zur Gesamt-Restzeit
+        const { clips } = await loadAutomation();
+        liveClipSeconds = clips.enabled ? estimateClipSeconds(clips, !findFfmpeg()) : 0;
         return voice ? { ...options, voice: parseVoiceOptions(voice) } : options;
       },
+      onProgress: (p) => liveProgress.update("analyze", p, liveClipSeconds),
       onFatal: (message) => {
         live.service = undefined;
         live.error = message;
       },
       // Einstellungen erst jetzt lesen, damit Änderungen ohne Neustart gelten
-      onFinished: async (result, log) => runAutomation(result, await loadAutomation(), log),
+      onFinished: async (result, log) => {
+        try {
+          await runAutomation(result, await loadAutomation(), log, OUTPUT_DIR, (p) => liveProgress.update("clips", p));
+        } finally {
+          liveProgress.reset();
+          liveClipSeconds = 0;
+        }
+      },
     });
   } catch (err: any) {
     live.error = err.message;
