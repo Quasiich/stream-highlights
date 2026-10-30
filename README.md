@@ -240,7 +240,12 @@ Es gibt zwei Wege, je nachdem, wo das Programm laufen soll:
   Einstellung wird gemerkt (`settings.json` im Programmordner) und gilt beim
   nächsten Start wieder. Die Schwellen und erweiterten Einstellungen, die beim
   Einschalten eingetragen sind, gelten auch für die automatischen
-  Auswertungen.
+  Auswertungen. **Sprache & Lautstärke** dagegen gilt immer so, wie es gerade
+  in der Oberfläche eingestellt ist: Jede Änderung wird sofort gespeichert und
+  von der nächsten Auswertung nach Stream-Ende übernommen, auch mitten im
+  Stream. Ist es eingeschaltet, lädt das Programm nach dem Stream die Tonspur
+  des VODs und lässt Whisper laufen (bei einer Nvidia-Karte etwa 2 Minuten pro
+  Stunde Stream), danach folgen wie eingestellt Discord und Clips.
 - **Auf einem Server (z. B. VPS), ohne dass dein PC laufen muss:**
   `npm run live`, siehe [unten](#auf-einem-server).
 
@@ -353,7 +358,8 @@ die gemessenen ersetzt.
 4. Klappt die Sprach-Auswertung nicht (z. B. kein Internet), gibt es trotzdem
    das normale Ergebnis aus Chat und Markern, mit einem Hinweis.
 
-Die Einstellungen werden gespeichert und gelten auch für den Live-Mitschnitt.
+Die Einstellungen werden bei jeder Änderung gespeichert und gelten sofort
+auch für den Live-Mitschnitt.
 
 Kommandozeile: `--voice`, `--model base|small|large-v3-turbo`,
 `--language de|en|auto`, `--keywords "clip das,oh mein gott"`, `--loud-db 12`,

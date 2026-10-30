@@ -31,6 +31,12 @@ export interface RecorderOptions {
   graceMs: number;
   analyze: AnalyzeOptions;
   /**
+   * Liefert die Optionen erst kurz vor der Auswertung, damit Einstellungen
+   * gelten, die während des Streams geändert wurden (z. B. Sprache &
+   * Lautstärke). Ohne gilt `analyze`.
+   */
+  currentAnalyze?: () => Promise<AnalyzeOptions>;
+  /**
    * Fehlen insgesamt mehr Sekunden als das (Programm lief nicht oder war
    * getrennt), wird der Chat vollständig per TwitchDownloaderCLI geladen.
    * Infinity schaltet das ab.
@@ -318,11 +324,12 @@ export class LiveRecorder {
       const length = vod?.length || (meta.endedAt ? secondsBetween(meta.startedAt, meta.endedAt) : undefined);
       const missing = meta.gaps.reduce((sum, g) => sum + Math.max(0, g.to - g.from), 0);
       const dir = join(this.opts.outDir, vod?.id ?? streamId);
+      const analyze = (await this.opts.currentAnalyze?.().catch(() => undefined)) ?? this.opts.analyze;
 
       let result: AnalysisResult | undefined;
       if (vod && missing > this.opts.maxGapSeconds) {
         log(`Im Mitschnitt fehlen ${Math.round(missing / 60)} min, lade den vollständigen Chat von VOD ${vod.id}.`);
-        result = await runAnalysis(vod.id, this.opts.analyze, () => {}, this.opts.outDir).catch((err) => {
+        result = await runAnalysis(vod.id, analyze, () => {}, this.opts.outDir).catch((err) => {
           log(`Chat-Download fehlgeschlagen (${err.message}), nehme den Mitschnitt.`);
           return undefined;
         });
@@ -336,7 +343,7 @@ export class LiveRecorder {
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "chat.json"), JSON.stringify(file));
         if (missing > 0) log(`Hinweis: Im Mitschnitt fehlen insgesamt ${Math.round(missing)} s.`);
-        result = await runAnalysis(join(dir, "chat.json"), this.opts.analyze, () => {}, this.opts.outDir);
+        result = await runAnalysis(join(dir, "chat.json"), analyze, () => {}, this.opts.outDir);
       }
 
       // Der Chat steckt jetzt in output/<id>/chat.json.

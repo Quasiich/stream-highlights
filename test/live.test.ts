@@ -253,3 +253,20 @@ test("startLive abonniert die vier Ereignisse und meldet den Status, ohne Chat-S
   assert.equal(status.channel, "streamer");
   await service.stop();
 });
+
+test("LiveRecorder holt die Optionen erst zur Auswertung (geänderte Einstellungen gelten sofort)", async (t) => {
+  const { opts, done } = await setup(t);
+  let asked = 0;
+  const rec = new LiveRecorder(
+    "42",
+    "streamer",
+    { ...opts, currentAnalyze: async () => (asked++, { ...defaultOptions, eventMinimums: { ...defaultOptions.eventMinimums, raidViewers: 999 } }) },
+    () => Date.parse(at(5)),
+  );
+  await rec.handle("stream.online", { broadcaster_user_id: "42", id: "900", type: "live", started_at: at(0) }, at(1));
+  await rec.handle("channel.chat.message", chat("hallo"), at(10));
+  await rec.handle("stream.offline", { broadcaster_user_id: "42" }, at(3600));
+  const result = await done;
+  assert.equal(asked, 1);
+  assert.equal(result.report.events.minimums.raidViewers, 999, "Schwelle aus den aktuellen Optionen");
+});

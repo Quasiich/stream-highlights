@@ -523,9 +523,10 @@ async function refreshStatus() {
 }
 
 // ---- Sprache & Lautstärke (Whisper) ---------------------------------------
-// Die Einstellungen speichert der Server beim Start einer Analyse, damit sie
-// auch für den Live-Mitschnitt und nach einem Neustart gelten.
+// Jede Änderung wird gespeichert, damit sie sofort auch für die nächste
+// Live-Auswertung und nach einem Neustart gilt.
 let voiceLoaded = false;
+let voiceSaveTimer;
 
 function applyVoice(v) {
   voiceLoaded = true;
@@ -566,6 +567,15 @@ function renderVoiceBox() {
 for (const id of ["voiceEnabled", "voiceLoud"]) $(id).addEventListener("change", renderVoiceBox);
 $("voiceModel").addEventListener("change", () => scheduleEstimate());
 $("vodInput").addEventListener("input", () => scheduleEstimate(600));
+
+function saveVoiceSoon() {
+  clearTimeout(voiceSaveTimer);
+  voiceSaveTimer = setTimeout(() => api("/api/voice", { method: "POST", body: readVoice() }).catch(() => {}), 800);
+}
+for (const id of ["voiceEnabled", "voiceModel", "voiceLanguage", "voiceKeywords", "voiceLoud", "voiceLoudDb", "voiceLoudMin", "voiceLoudTop"]) {
+  $(id).addEventListener("input", saveVoiceSoon);
+  $(id).addEventListener("change", saveVoiceSoon);
+}
 
 /** Lesbare Dauer: 40 → "40 s", 380 → "6 Min.", 4300 → "1 Std. 12 Min." */
 function duration(seconds) {

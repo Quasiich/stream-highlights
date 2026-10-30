@@ -133,6 +133,13 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return send(res, 200, { length, ...(await estimateVoice(length, model, id ? join(OUTPUT_DIR, id) : undefined)) });
   }
 
+  // Die Oberfläche speichert jede Änderung, damit sie sofort auch für den Live-Mitschnitt gilt
+  if (req.method === "POST" && path === "/api/voice") {
+    const voice = parseVoiceOptions(await readJson(req));
+    await updateSettings({ voice });
+    return send(res, 200, voice);
+  }
+
   if (req.method === "GET" && path === "/api/reports") return send(res, 200, await listReports());
 
   if (req.method === "GET" && path === "/api/vods") {
@@ -435,6 +442,12 @@ async function restartLive(throwErrors = false): Promise<void> {
   try {
     live.service = await startLive({
       ...defaultRecorderOptions(OUTPUT_DIR, analyzeOptions(live.options ?? {})),
+      // Sprache & Lautstärke wie zuletzt in der Oberfläche eingestellt, nicht wie beim Einschalten
+      currentAnalyze: async () => {
+        const options = analyzeOptions(live.options ?? {});
+        const voice = (await loadSettings()).voice;
+        return voice ? { ...options, voice: parseVoiceOptions(voice) } : options;
+      },
       onFatal: (message) => {
         live.service = undefined;
         live.error = message;
