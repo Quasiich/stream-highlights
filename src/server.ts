@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
+import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendHighlights, webhookList } from "./automation.ts";
+import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
 import { type LiveService, startLive } from "./livemode.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
+import { loadSettings, updateSettings } from "./settings.ts";
 import { findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVod, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 import { defaultVoiceOptions, parseVoiceOptions, type VoiceOptions, WHISPER_MODELS, type WhisperModel } from "./voice.ts";
@@ -14,15 +17,6 @@ import { detectGpu, estimateVoice } from "./whisper.ts";
 import { canSelfUpdate, checkForUpdate, deleteBackup, installUpdate, launchNewVersion, readBackup, VERSION } from "./update.ts";
 
 export const PORT = 4777;
-/** Einstellungen, die einen Neustart überdauern (im Programmordner) */
-export const SETTINGS_FILE = "settings.json";
-
-interface Settings {
-  /** Live-Mitschnitt beim Start einschalten, mit diesen Analyse-Einstellungen */
-  live?: { enabled: boolean; options?: Record<string, unknown> };
-  /** Zuletzt benutzte Einstellungen für Sprache und Lautstärke */
-  voice?: VoiceOptions;
-}
 
 interface Job {
   id: string;
@@ -164,24 +158,63 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     if (!parseVideoId(input)) return send(res, 400, { error: "Bitte einen VOD-Link oder eine VOD-ID angeben, z. B. https://www.twitch.tv/videos/2912392719" });
     const opts = analyzeOptions(body);
     if (body.refresh) await rm(join(OUTPUT_DIR, parseVideoId(input)!, "chat.json"), { force: true });
-    if (body.voice) await saveSettings({ voice: opts.voice });
+    if (body.voice) await updateSettings({ voice: opts.voice });
+    const id = startJob(input, async (progress) => ({ id: (await runAnalysis(input, opts, progress)).report.video.id }));
+    return send(res, 202, { id });
+  }
 
-    const current: Job = { id: Date.now().toString(36), input, messages: [], listeners: new Set(), finished: false };
-    job = current;
-    const emit = (event: string, data: unknown) => {
-      const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-      current.messages.push(message);
-      for (const l of current.listeners) l.write(message);
-    };
-    runAnalysis(input, opts, (p: Progress) => emit("progress", p))
-      .then(({ report }) => emit("done", { id: report.video.id }))
-      .catch((err) => emit("failed", { error: err.message }))
-      .finally(() => {
-        current.finished = true;
-        for (const l of current.listeners) l.end();
-        current.listeners.clear();
-      });
-    return send(res, 202, { id: current.id });
+  if (path === "/api/automation" && req.method === "GET") {
+    return send(res, 200, { ...(await loadAutomation()), placeholders: MESSAGE_PLACEHOLDERS, defaultMessage: DEFAULT_MESSAGE });
+  }
+
+  if (path === "/api/automation" && req.method === "POST") {
+    const body = await readJson(req);
+    const invalid = webhookList(body.discord).findIndex((w) => !isWebhookUrl(w.url));
+    if (invalid >= 0) {
+      const name = webhookList(body.discord)[invalid].name || `Webhook ${invalid + 1}`;
+      return send(res, 400, { error: `${name}: Das ist keine gültige Discord-Webhook-URL (https://discord.com/api/webhooks/…).` });
+    }
+    const s = normalizeAutomation(body);
+    if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte mindestens einen Discord-Webhook eintragen." });
+    await updateSettings({ discord: { ...s.discord }, clips: { ...s.clips } });
+    return send(res, 200, s);
+  }
+
+  if (path === "/api/automation/test" && req.method === "POST") {
+    const body = await readJson(req);
+    await postToDiscord(String(body.url ?? ""), testMessage(typeof body.message === "string" ? body.message.trim() : undefined));
+    return send(res, 200, { ok: true });
+  }
+
+  const discordMatch = path.match(/^\/api\/reports\/([\w-]+)\/discord$/);
+  if (req.method === "POST" && discordMatch) {
+    const report = await readReport(discordMatch[1]);
+    if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
+    const sent = await sendHighlights(report, (await loadAutomation()).discord);
+    return send(res, 200, { sent });
+  }
+
+  const clipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/clips$/);
+  if (req.method === "POST" && clipsMatch) {
+    if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse oder ein Clip-Schnitt." });
+    const reportId = clipsMatch[1];
+    const report = await readReport(reportId);
+    if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
+    const { clips } = await loadAutomation();
+    const id = startJob(reportId, async (progress) => {
+      const done = await makeClips(report, join(OUTPUT_DIR, reportId), clips, OUTPUT_DIR, progress);
+      return { id: reportId, clips: done.length };
+    });
+    return send(res, 202, { id });
+  }
+
+  const clipsFolderMatch = path.match(/^\/api\/reports\/([\w-]+)\/clips\/open$/);
+  if (req.method === "POST" && clipsFolderMatch) {
+    // Nur Ordner öffnen, die das Programm selbst in highlights.json eingetragen hat
+    const file = (await readReport(clipsFolderMatch[1]))?.clips?.[0]?.file;
+    if (!file || !existsSync(dirname(file))) return send(res, 404, { error: "Clip-Ordner nicht gefunden" });
+    openPath(dirname(file));
+    return send(res, 200, { ok: true });
   }
 
   const jobMatch = path.match(/^\/api\/jobs\/(\w+)$/);
@@ -283,6 +316,29 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   send(res, 404, { error: "Nicht gefunden" });
 }
 
+/**
+ * Startet eine Analyse oder einen Clip-Schnitt im Hintergrund. Der Browser
+ * verfolgt den Fortschritt über /api/jobs/<id> (progress, done, failed).
+ */
+function startJob(input: string, run: (progress: (p: Progress) => void) => Promise<unknown>): string {
+  const current: Job = { id: Date.now().toString(36), input, messages: [], listeners: new Set(), finished: false };
+  job = current;
+  const emit = (event: string, data: unknown) => {
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    current.messages.push(message);
+    for (const l of current.listeners) l.write(message);
+  };
+  run((p) => emit("progress", p))
+    .then((result) => emit("done", result))
+    .catch((err) => emit("failed", { error: err.message }))
+    .finally(() => {
+      current.finished = true;
+      for (const l of current.listeners) l.end();
+      current.listeners.clear();
+    });
+  return current.id;
+}
+
 function analyzeOptions(body: any): AnalyzeOptions {
   return {
     ...defaultOptions,
@@ -336,14 +392,6 @@ async function restartIntoNewVersion(): Promise<void> {
 
 // ---- Live-Mitschnitt ------------------------------------------------------
 
-async function loadSettings(): Promise<Settings> {
-  try {
-    return JSON.parse(await readFile(SETTINGS_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
 function liveStatus() {
   if (live.service) return { enabled: true, ...live.service.status() };
   const state = !live.enabled ? "off" : live.starting ? "connecting" : "error";
@@ -369,11 +417,7 @@ async function setLive(enabled: boolean, options?: Record<string, unknown>): Pro
       throw err;
     }
   }
-  await saveSettings({ live: { enabled: live.enabled, options: live.options } });
-}
-
-async function saveSettings(changes: Partial<Settings>): Promise<void> {
-  await writeFile(SETTINGS_FILE, JSON.stringify({ ...(await loadSettings()), ...changes }, null, 2));
+  await updateSettings({ live: { enabled: live.enabled, options: live.options } });
 }
 
 async function stopLive(error?: string) {
@@ -395,6 +439,8 @@ async function restartLive(throwErrors = false): Promise<void> {
         live.service = undefined;
         live.error = message;
       },
+      // Einstellungen erst jetzt lesen, damit Änderungen ohne Neustart gelten
+      onFinished: async (result, log) => runAutomation(result, await loadAutomation(), log),
     });
   } catch (err: any) {
     live.error = err.message;

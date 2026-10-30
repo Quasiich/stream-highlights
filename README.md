@@ -143,6 +143,10 @@ Optionen: `--top 15` (mehr Chat-Treffer), `--bucket 20` (feinere Fenster),
 
 Eine vorhandene Chat-Datei geht auch direkt: `npm run analyze -- chat.json`.
 
+Mit `--clips` werden die Highlights danach als MP4 aus dem VOD geschnitten,
+mit `--discord` in Discord gepostet, jeweils mit den Einstellungen aus
+`settings.json` (siehe [Nach der Auswertung](#nach-der-auswertung-discord-und-clips)).
+
 ## Streamer-Marker (optional)
 
 Als Streamer kannst du während des Streams per Hotkey Stellen markieren, die
@@ -274,7 +278,8 @@ npm run live
 
 Optionen: `--grace 5` (Wartezeit nach Stream-Ende in Minuten), `--max-gap 300`
 (ab wie vielen fehlenden Sekunden der Chat komplett geladen wird, `0` = nie),
-`--out <ordner>`.
+`--out <ordner>`, `--settings <datei>` (Discord und Clips, siehe
+[unten](#nach-der-auswertung-discord-und-clips)).
 
 Als Dienst (systemd): Eine Vorlage liegt in
 `deploy/stream-highlights-live.service`. Pfad (`/opt/stream-highlights`) und
@@ -355,6 +360,71 @@ Kommandozeile: `--voice`, `--model base|small|large-v3-turbo`,
 `--no-loud`. Außerhalb von Windows gibt es keine fertigen Whisper-Builds: dort
 whisper.cpp selbst bauen und `whisper-cli` in den PATH legen (oder
 `WHISPER_CLI` auf die Datei setzen); ffmpeg muss installiert sein.
+
+## Nach der Auswertung: Discord und Clips
+
+Optional kann das Programm nach jeder Live-Auswertung automatisch
+
+- **die besten Highlights in einen Discord-Kanal posten**: Zeit mit Link zur
+  Stelle im VOD, Länge, Chat-Ausschlag bzw. Streamer-Marker und was der Chat
+  geschrieben hat, dazu die Summe der Subs, Raids und Bits.
+- **die Highlights als MP4 aus dem VOD schneiden**, ohne den ganzen Stream
+  herunterzuladen. Beim ersten Mal lädt TwitchDownloaderCLI dafür ffmpeg in
+  den Programmordner (ca. 80 MB).
+
+Eingestellt wird das über **⚙ Einstellungen** oben rechts (oder links unter
+**Nach der Auswertung**). Für alle anderen Analysen gibt es im Ergebnis die
+Knöpfe **An Discord senden** und **Clips schneiden**, die dieselben
+Einstellungen nutzen.
+
+**Discord:**
+
+- **Webhooks:** In Discord den Kanal bearbeiten → Integrationen → Webhooks →
+  Neuer Webhook → Webhook-URL kopieren und in den Einstellungen eintragen. Es
+  gehen mehrere (z. B. „Mods“ und „Community“), jeder Post geht dann in alle
+  Kanäle. **Testnachricht senden** neben jedem Webhook prüft ihn und zeigt
+  gleich den eigenen Text mit Beispielwerten. Die URLs wie Passwörter
+  behandeln: Wer sie kennt, kann in den Kanal schreiben.
+- **Text über den Highlights:** frei wählbar, mit Platzhaltern `{kanal}`,
+  `{titel}`, `{anzahl}`, `{gesamt}`, `{datum}` und `{link}`. Standard:
+  `Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}`.
+  Discord-Formatierung wie `**fett**` geht.
+- **Highlights im Post:** wie viele der besten Highlights gelistet werden.
+
+Pings wie `@everyone` werden nie ausgelöst, weder aus dem Chat noch aus dem
+eigenen Text.
+
+**Clips:**
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Anzahl Clips | Die besten n Highlights, beginnend mit #1 | 5 |
+| Länge: wie das erkannte Highlight | Ganzes Highlight plus **Puffer** vorne und hinten. Längere werden um den Peak herum auf **Höchstens** gekürzt. | 5 s Puffer, max. 180 s |
+| Länge: feste Länge | Jeder Clip ist **Clip-Länge** lang und beginnt **Davon vor dem Peak** vor dem Streamer-Marker bzw. dem stärksten Chat-Moment | 60 s, davon 45 s vorher |
+| Qualität | 1080p, 720p, 480p, 360p oder die beste verfügbare. Die beste ist bei manchen Kanälen 1440p in HEVC, das spielen nicht alle Player und Discord ab. | 1080p |
+| Zielordner | Leer: `output/<VOD-ID>/clips/`. Sonst ein Unterordner pro Stream, z. B. `D:\Clips\2026-10-30_2912392719\` | leer |
+
+Die Dateien heißen nach Rang und Startzeit, z. B. `01_28-10.mp4`. Schon
+vorhandene Clips werden übersprungen, ein abgebrochener Schnitt lässt sich also
+einfach wiederholen.
+
+Gespeichert wird alles in `settings.json` im Programmordner. Auf einem Server
+ohne Oberfläche dort eintragen, `npm run live` liest die Datei nach jedem Stream
+neu:
+
+```json
+{
+  "discord": {
+    "enabled": true,
+    "webhooks": [{ "name": "Mods", "url": "https://discord.com/api/webhooks/…" }],
+    "message": "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}",
+    "top": 5
+  },
+  "clips": { "enabled": true, "mode": "highlight", "count": 5, "paddingSeconds": 5, "maxLengthSeconds": 180, "lengthSeconds": 60, "leadSeconds": 45, "quality": "1080p", "dir": "/srv/clips" }
+}
+```
+
+Über die Kommandozeile geht es mit `npm run analyze -- <VOD> --clips --discord`.
 
 ## So wird bewertet
 

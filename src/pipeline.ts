@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +5,7 @@ import { type ChatLog, loadChat } from "./chat.ts";
 import { type AnalyzeOptions, defaultOptions, findHighlights, type Highlight } from "./analyze.ts";
 import { collectEvents, type EventMinimums, type EventSummary, isNotable, type StreamEvent, summarize } from "./events.ts";
 import { toMarkdown } from "./format.ts";
-import { ensureTwitchDownloader } from "./tools.ts";
+import { ensureTwitchDownloader, runTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, fetchMarkers, type Marker } from "./twitch.ts";
 import type { KeywordHit, VoiceSignals, WhisperModel } from "./voice.ts";
 import { analyzeVoice } from "./whisper.ts";
@@ -14,7 +13,7 @@ import { analyzeVoice } from "./whisper.ts";
 export const OUTPUT_DIR = "output";
 
 export interface Progress {
-  stage: "tools" | "chat" | "markers" | "setup" | "audio" | "transcribe" | "analyze";
+  stage: "tools" | "chat" | "markers" | "setup" | "audio" | "transcribe" | "analyze" | "clips";
   message: string;
   /** 0–100, falls bekannt */
   percent?: number;
@@ -53,6 +52,17 @@ export interface Report {
   };
   /** Warum die Sprach-Auswertung fehlt, obwohl sie eingeschaltet war */
   voiceNote?: string;
+  /** Aus dem VOD geschnittene Clips, siehe clips.ts */
+  clips?: ClipFile[];
+}
+
+export interface ClipFile {
+  /** Rang des Highlights */
+  rank: number;
+  start: number;
+  end: number;
+  /** Absoluter Pfad der MP4 */
+  file: string;
 }
 
 export interface AnalysisResult {
@@ -143,9 +153,13 @@ export async function runAnalysis(
 
   const dir = join(outDir, log.videoId ?? "local");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "highlights.json"), JSON.stringify(report, null, 2));
+  await writeReport(dir, report);
   await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events, opts.eventMinimums));
   return { log, highlights, events, report, dir };
+}
+
+export async function writeReport(dir: string, report: Report): Promise<void> {
+  await writeFile(join(dir, "highlights.json"), JSON.stringify(report, null, 2));
 }
 
 async function downloadChat(videoId: string, dir: string, onProgress: (p: Progress) => void): Promise<string> {
@@ -163,25 +177,10 @@ async function downloadChat(videoId: string, dir: string, onProgress: (p: Progre
   // fertiger Chat gilt. Die Endung muss .json bleiben, daran erkennt
   // TwitchDownloader das Format.
   const partial = join(dir, "chat.part.json");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(exe, ["chatdownload", "--id", videoId, "-o", partial], { windowsHide: true });
-    let output = "";
-    const onData = (data: Buffer) => {
-      const text = data.toString();
-      output = (output + text).slice(-2000);
-      // z. B. "[STATUS] - Downloading 42%" oder "[STATUS] - Backfilling Commenter Info 0%"
-      for (const m of text.matchAll(/\[STATUS\] - ([^\[\r\n]*?)\s*(\d+)%/g)) {
-        const step = m[1].startsWith("Downloading") ? "Lade Chat" : m[1];
-        onProgress({ stage: "chat", message: `${step} …`, percent: Number(m[2]) });
-      }
-    };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", onData);
-    child.on("error", (err) => reject(new Error(`TwitchDownloaderCLI konnte nicht gestartet werden: ${err.message}`)));
-    child.on("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`Chat-Download fehlgeschlagen (Code ${code}). ${output.trim().split(/\r?\n/).at(-1) ?? ""}`)),
-    );
-  }).catch(async (err) => {
+  // z. B. "[STATUS] - Downloading 42%" oder "[STATUS] - Backfilling Commenter Info 0%"
+  await runTwitchDownloader(exe, ["chatdownload", "--id", videoId, "-o", partial], "Chat-Download", (step, percent) =>
+    onProgress({ stage: "chat", message: `${step.startsWith("Downloading") ? "Lade Chat" : step} …`, percent }),
+  ).catch(async (err) => {
     await rm(partial, { force: true });
     throw err;
   });

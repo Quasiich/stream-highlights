@@ -49,7 +49,7 @@
     color: var(--text);
     font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  button, input { font: inherit; color: inherit; }
+  button, input, select { font: inherit; color: inherit; }
   a { color: var(--accent); }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -104,7 +104,8 @@
   summary { cursor: pointer; color: var(--muted); font-size: 14px; }
   .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
   .options label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
-  .options input { color: var(--text); font-size: 15px; }
+  .options input, .options select { color: var(--text); font-size: 15px; }
+  .options .wide { grid-column: 1 / -1; }
   .thresholds { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 14px; margin: 14px 0 0; }
   .thresholds legend { font-size: 13px; color: var(--muted); padding: 0 6px; }
   .thresholds .options { margin-top: 4px; }
@@ -172,6 +173,8 @@
   .link-btn { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: inherit; }
   .result-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
   .result-head h2 { font-size: 17px; margin: 0 0 4px; }
+  .result-title { flex: 1 1 320px; min-width: 0; }
+  .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .result-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 18px; margin-top: 16px; align-items: start; }
   @media (max-width: 1150px) { .result-grid { grid-template-columns: 1fr; } }
@@ -197,6 +200,23 @@
   .badge.loud { background: var(--error-soft); color: var(--error); font-weight: 600; }
   .row.keyword:not(.marker) { border-left: 4px solid var(--accent); }
   .said { grid-column: 2 / 4; font-size: 13px; font-style: italic; overflow-wrap: anywhere; }
+  .badge.clip { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .note.ok { color: var(--ok); }
+  .auto-summary { list-style: none; margin: 0 0 10px; padding: 0; font-size: 13px; display: grid; gap: 4px; }
+  .auto-summary .dot { display: inline-block; margin-right: 6px; }
+  #autoDialog { width: min(680px, calc(100vw - 32px)); }
+  .field-head { margin: 16px 0 4px; }
+  .field-note { margin: 0 0 8px; }
+  .hooks { display: grid; gap: 8px; margin-bottom: 8px; }
+  .hook { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+  @media (max-width: 560px) { .hook { grid-template-columns: 1fr auto auto; } .hook input:first-child { grid-column: 1 / -1; } }
+  .hook-status { grid-column: 1 / -1; font-size: 12px; margin-top: -4px; }
+  .hook-status.ok { color: var(--ok); }
+  .hook-status.error { color: var(--error); }
+  .placeholders { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .placeholders button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 999px; padding: 1px 8px; cursor: pointer; font-size: 12px; color: var(--text); }
+  .placeholders button:hover { border-color: var(--accent); }
+  .preview { background: var(--panel-2); border-radius: 8px; padding: 8px 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
   .score { font-weight: 700; font-variant-numeric: tabular-nums; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -225,6 +245,7 @@
   <div class="spacer"></div>
   <div class="chip" id="twitchChip"><span class="dot" id="twitchDot"></span><span id="twitchText">Twitch …</span></div>
   <button class="btn small" id="twitchBtn">Mit Twitch verbinden</button>
+  <button class="btn small" id="settingsBtn">⚙ Einstellungen</button>
 </header>
 
 <section class="update-banner hidden" id="updateBanner" role="status" aria-live="polite">
@@ -270,6 +291,15 @@
       <div id="liveLast" class="side-note hidden"></div>
       <div id="liveError" class="error-box hidden small" role="alert"></div>
       <details id="liveLogBox" class="hidden"><summary>Protokoll</summary><pre class="live-log" id="liveLog"></pre></details>
+    </div>
+    <div class="panel" id="autoPanel">
+      <h2>Nach der Auswertung</h2>
+      <ul class="auto-summary">
+        <li><span class="dot" id="autoDiscordDot"></span><span id="autoDiscordText">Discord …</span></li>
+        <li><span class="dot" id="autoClipsDot"></span><span id="autoClipsText">Clips …</span></li>
+      </ul>
+      <p class="side-note">Läuft automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es die Knöpfe im Ergebnis.</p>
+      <button class="btn small" id="autoOpen">Einstellungen</button>
     </div>
     <p class="side-note backup-note hidden" id="backupNote">
       <span id="backupText"></span>
@@ -381,6 +411,66 @@
     <p class="small muted" id="loginStatus">Warte auf Bestätigung …</p>
     <div class="dialog-actions"><button class="btn" data-close>Schließen</button></div>
   </div>
+</dialog>
+
+<dialog id="autoDialog">
+  <form id="autoForm">
+    <h2>Einstellungen</h2>
+    <p class="small muted">Discord und Clips laufen automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es im Ergebnis die Knöpfe „An Discord senden“ und „Clips schneiden“, die dieselben Einstellungen nutzen.</p>
+    <fieldset class="thresholds">
+      <legend>Discord-Benachrichtigung</legend>
+      <label class="check small"><input type="checkbox" id="dcEnabled"> Highlights nach jedem Stream automatisch posten</label>
+
+      <h3 class="field-head">Webhooks</h3>
+      <p class="small muted field-note">Jeder Post geht an alle eingetragenen Webhooks, also in alle Kanäle. In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → Webhook-URL kopieren.</p>
+      <div id="dcHooks" class="hooks"></div>
+      <button class="btn small" type="button" id="dcAdd">+ Webhook hinzufügen</button>
+
+      <h3 class="field-head">Text über den Highlights</h3>
+      <textarea id="dcMessage" rows="2" maxlength="1000" aria-label="Text über den Highlights"></textarea>
+      <div class="placeholders small muted">Platzhalter (anklicken zum Einfügen): <span id="dcPlaceholders"></span></div>
+      <div class="preview small"><span class="muted">Vorschau:</span> <span id="dcPreview"></span></div>
+      <button class="link-btn small" type="button" id="dcResetMessage">Standardtext</button>
+
+      <div class="options">
+        <label>Highlights im Post <input type="number" id="dcTop" min="1" max="25"></label>
+      </div>
+    </fieldset>
+    <fieldset class="thresholds">
+      <legend>Clips aus dem VOD</legend>
+      <label class="check small"><input type="checkbox" id="clEnabled"> Highlights automatisch als MP4 schneiden</label>
+      <div class="options">
+        <label>Anzahl Clips <input type="number" id="clCount" min="1" max="25"></label>
+        <label>Länge
+          <select id="clMode">
+            <option value="highlight">wie das erkannte Highlight</option>
+            <option value="fixed">feste Länge</option>
+          </select>
+        </label>
+        <label data-mode="fixed">Clip-Länge (s) <input type="number" id="clLength" min="5" max="600"></label>
+        <label data-mode="fixed">Davon vor dem Peak (s) <input type="number" id="clLead" min="0" max="600"></label>
+        <label data-mode="highlight">Puffer vorne/hinten (s) <input type="number" id="clPadding" min="0" max="120"></label>
+        <label data-mode="highlight">Höchstens (s) <input type="number" id="clMax" min="10" max="900"></label>
+        <label>Qualität
+          <select id="clQuality">
+            <option value="1080p">1080p (empfohlen)</option>
+            <option value="720p">720p</option>
+            <option value="480p">480p</option>
+            <option value="360p">360p</option>
+            <option value="">Beste verfügbare (evtl. 1440p/HEVC)</option>
+          </select>
+        </label>
+        <label class="wide">Zielordner <input type="text" id="clDir" placeholder="leer = output/&lt;VOD-ID&gt;/clips" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <p class="small muted" id="clHint"></p>
+    </fieldset>
+    <div id="autoNote" class="note hidden" role="status"></div>
+    <div id="autoError" class="error-box hidden" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-close>Abbrechen</button>
+      <button class="btn primary" type="submit" id="autoSave">Speichern</button>
+    </div>
+  </form>
 </dialog>
 
 <script>
@@ -579,7 +669,7 @@ function openLogin() {
   $("loginError").classList.add("hidden");
   $("loginDialog").showModal();
 }
-for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => $("loginDialog").close());
+for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => b.closest("dialog").close());
 
 $("loginStart").addEventListener("click", async () => {
   $("loginError").classList.add("hidden");
@@ -624,6 +714,7 @@ const STAGE_LABEL = {
   audio: "Ton",
   transcribe: "Whisper",
   analyze: "Auswertung",
+  clips: "Clips",
 };
 
 $("analyzeForm").addEventListener("submit", async (e) => {
@@ -851,6 +942,8 @@ async function showReport(id) {
   const v = r.video;
   const markerCount = r.highlights.filter((h) => h.sources.includes("marker")).length;
   const voiceCount = r.highlights.filter((h) => h.sources.includes("keyword")).length;
+  const clips = r.clips || [];
+  const clipRanks = new Set(clips.map((c) => c.rank));
 
   const BADGES = {
     marker: () => '<span class="badge marker">★ Marker</span>',
@@ -860,7 +953,7 @@ async function showReport(id) {
   };
   const rows = r.highlights
     .map((h, i) => {
-      const badges = h.sources.map((s) => BADGES[s](h)).join(" ");
+      const badges = h.sources.map((s) => BADGES[s](h)).join(" ") + (clipRanks.has(h.rank) ? ' <span class="badge clip">Clip</span>' : "");
       const words = [
         h.markers.length ? "Marker: " + h.markers.join(" / ") : "",
         h.keywords.length ? "Gesagt: " + h.keywords.map((k) => "„" + k + "“").join(", ") : "",
@@ -891,7 +984,7 @@ async function showReport(id) {
 
   $("result").innerHTML = `
     <div class="result-head">
-      <div style="flex:1; min-width: 0">
+      <div class="result-title">
         <h2>${esc(v.title || "VOD " + v.id)}</h2>
         <div class="stats">
           ${v.channel ? `<span>${esc(v.channel)}</span>` : ""}
@@ -900,12 +993,19 @@ async function showReport(id) {
           <span>${r.highlights.length} Highlights${markerCount ? `, davon ${markerCount} vom Streamer markiert` : ""}${voiceCount ? `, ${voiceCount} mit Stichwort` : ""}</span>
         </div>
       </div>
-      <a class="btn small" href="https://www.twitch.tv/videos/${esc(v.id)}" target="_blank" rel="noopener">Auf Twitch öffnen</a>
-      <button class="btn small" id="openFolder">Ordner öffnen</button>
+      <div class="result-actions">
+        <a class="btn small" href="https://www.twitch.tv/videos/${esc(v.id)}" target="_blank" rel="noopener">Auf Twitch öffnen</a>
+        <button class="btn small" id="openFolder">Ordner öffnen</button>
+        <button class="btn small" id="sendDiscord">An Discord senden</button>
+        <button class="btn small" id="cutClips">${clips.length ? "Clips ergänzen" : "Clips schneiden"}</button>
+        ${clips.length ? '<button class="btn small" id="openClips">Clip-Ordner öffnen</button>' : ""}
+      </div>
     </div>
     ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
     ${voiceLine ? `<div class="note">${voiceLine}</div>` : ""}
     ${r.voiceNote ? `<div class="error-box">${esc(r.voiceNote)}</div>` : ""}
+    ${clips.length ? `<div class="note">${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} geschnitten: ${esc(clips[0].file.replace(/[\\/][^\\/]*$/, ""))}</div>` : ""}
+    <div id="resultNote" class="note hidden" role="status"></div>
     <div class="result-grid">
       <div class="list" id="hlList">${rows || '<div class="empty">Keine deutlichen Peaks gefunden.</div>'}</div>
       <div class="player">
@@ -925,12 +1025,41 @@ async function showReport(id) {
       ${eventRows ? `<table><thead><tr><th>Zeit</th><th>Wer</th><th>Was</th></tr></thead><tbody>${eventRows}</tbody></table>` : '<p class="small muted">Keine Events über den Schwellen.</p>'}
     </div>`;
 
-  $("openFolder").addEventListener("click", () => api("/api/reports/" + encodeURIComponent(id) + "/open", { method: "POST" }));
+  const base = "/api/reports/" + encodeURIComponent(id);
+  $("openFolder").addEventListener("click", () => api(base + "/open", { method: "POST" }));
+  if (clips.length) $("openClips").addEventListener("click", () => api(base + "/clips/open", { method: "POST" }).catch((err) => resultNote(err.message, true)));
+  $("sendDiscord").addEventListener("click", async () => {
+    $("sendDiscord").disabled = true;
+    try {
+      const res = await api(base + "/discord", { method: "POST" });
+      resultNote("Highlights in Discord gepostet: " + res.sent.join(", ") + ".");
+    } catch (err) {
+      resultNote(err.message, true);
+    } finally {
+      $("sendDiscord").disabled = false;
+    }
+  });
+  $("cutClips").addEventListener("click", async () => {
+    $("analyzeError").classList.add("hidden");
+    try {
+      const job = await api(base + "/clips", { method: "POST" });
+      follow(job.id);
+      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      resultNote(err.message, true);
+    }
+  });
   for (const row of $("hlList").querySelectorAll(".row")) {
     const play = () => playHighlight(v.id, r.highlights[Number(row.dataset.i)], row);
     row.addEventListener("click", play);
     row.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), play()));
   }
+}
+
+function resultNote(message, isError = false) {
+  const note = $("resultNote");
+  note.textContent = message;
+  note.className = isError ? "error-box" : "note ok";
 }
 
 function describe(e) {
@@ -949,6 +1078,150 @@ function playHighlight(videoId, h, row) {
   $("playerFrame").innerHTML = `<iframe src="${esc(src)}" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
   $("playerCaption").innerHTML = `#${h.rank}: ${clock(h.start)} – ${clock(h.end)} · <a href="${vodUrl(videoId, h.start)}" target="_blank" rel="noopener">auf Twitch öffnen</a>`;
 }
+
+// ---- Nach der Auswertung (Discord, Clips) -------------------------------
+let automation = null;
+const CLIP_FIELDS = [["count", "clCount"], ["lengthSeconds", "clLength"], ["leadSeconds", "clLead"], ["paddingSeconds", "clPadding"], ["maxLengthSeconds", "clMax"]];
+
+async function refreshAutomation() {
+  automation = await api("/api/automation");
+  const d = automation.discord, c = automation.clips;
+  $("autoDiscordDot").classList.toggle("on", d.enabled);
+  $("autoDiscordText").textContent = d.enabled
+    ? "Discord: die besten " + d.top + " an " + (d.webhooks.length === 1 ? "1 Webhook" : d.webhooks.length + " Webhooks")
+    : "Discord: aus";
+  $("autoClipsDot").classList.toggle("on", c.enabled);
+  $("autoClipsText").textContent = c.enabled
+    ? "Clips: " + c.count + " Stück, " + (c.mode === "fixed" ? c.lengthSeconds + " s" : "Highlight-Länge, max. " + c.maxLengthSeconds + " s")
+    : "Clips: aus";
+}
+
+function showClipMode() {
+  for (const el of $("autoForm").querySelectorAll("[data-mode]")) el.classList.toggle("hidden", el.dataset.mode !== $("clMode").value);
+  $("clHint").textContent = $("clMode").value === "fixed"
+    ? "Jeder Clip ist gleich lang und beginnt die eingestellte Zeit vor dem Peak (Streamer-Marker bzw. stärkster Chat-Moment)."
+    : "Jeder Clip umfasst das erkannte Highlight plus Puffer. Längere Highlights werden um den Peak herum gekürzt.";
+  $("clHint").textContent += " Mit Zielordner landen die Clips in einem Unterordner pro Stream (Datum_VOD-ID). Beim ersten Mal wird ffmpeg automatisch geladen (ca. 80 MB).";
+}
+$("clMode").addEventListener("change", showClipMode);
+
+function autoMessage(message, isError = false) {
+  $("autoError").classList.toggle("hidden", !isError);
+  $("autoNote").classList.toggle("hidden", isError || !message);
+  $(isError ? "autoError" : "autoNote").textContent = message;
+}
+
+// Beispielwerte für die Vorschau, wie bei der Testnachricht
+const SAMPLE_VARS = { kanal: "scuse", titel: "Dienstagsmodus", anzahl: "5", gesamt: "10", datum: "30.10.2026", link: "https://www.twitch.tv/videos/2912392719" };
+
+function renderPreview() {
+  const text = ($("dcMessage").value.trim() || automation.defaultMessage).replace(/\{(\w+)\}/g, (m, key) => SAMPLE_VARS[key.toLowerCase()] ?? m);
+  // **fett** wie in Discord darstellen
+  $("dcPreview").innerHTML = esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+}
+$("dcMessage").addEventListener("input", renderPreview);
+$("dcResetMessage").addEventListener("click", () => {
+  $("dcMessage").value = automation.defaultMessage;
+  renderPreview();
+});
+
+function insertPlaceholder(key) {
+  const area = $("dcMessage");
+  const at = area.selectionStart ?? area.value.length;
+  area.value = area.value.slice(0, at) + "{" + key + "}" + area.value.slice(area.selectionEnd ?? at);
+  area.focus();
+  area.selectionStart = area.selectionEnd = at + key.length + 2;
+  renderPreview();
+}
+
+function addHookRow(hook = { name: "", url: "" }) {
+  const row = document.createElement("div");
+  row.className = "hook";
+  row.innerHTML = `
+    <input type="text" class="hook-name" placeholder="Name, z. B. Mods" maxlength="50" aria-label="Name des Webhooks" autocomplete="off">
+    <input type="text" class="hook-url" placeholder="https://discord.com/api/webhooks/…" aria-label="Webhook-URL" autocomplete="off" spellcheck="false">
+    <button class="btn small" type="button" data-test>Testnachricht senden</button>
+    <button class="btn small" type="button" data-remove aria-label="Webhook entfernen" title="Entfernen">✕</button>
+    <div class="hook-status hidden" role="status"></div>`;
+  row.querySelector(".hook-name").value = hook.name;
+  row.querySelector(".hook-url").value = hook.url;
+  row.querySelector("[data-remove]").addEventListener("click", () => row.remove());
+  const testBtn = row.querySelector("[data-test]");
+  const statusEl = row.querySelector(".hook-status");
+  testBtn.addEventListener("click", async () => {
+    testBtn.disabled = true;
+    statusEl.className = "hook-status";
+    statusEl.textContent = "Sende …";
+    try {
+      await api("/api/automation/test", { method: "POST", body: { url: row.querySelector(".hook-url").value, message: $("dcMessage").value } });
+      statusEl.className = "hook-status ok";
+      statusEl.textContent = "Gesendet. Schau in den Discord-Kanal.";
+    } catch (err) {
+      statusEl.className = "hook-status error";
+      statusEl.textContent = err.message;
+    } finally {
+      testBtn.disabled = false;
+    }
+  });
+  $("dcHooks").appendChild(row);
+  return row;
+}
+$("dcAdd").addEventListener("click", () => addHookRow().querySelector(".hook-name").focus());
+
+function readHooks() {
+  return [...$("dcHooks").querySelectorAll(".hook")]
+    .map((row) => ({ name: row.querySelector(".hook-name").value.trim(), url: row.querySelector(".hook-url").value.trim() }))
+    .filter((h) => h.url);
+}
+
+async function openSettings() {
+  await refreshAutomation();
+  const d = automation.discord, c = automation.clips;
+  $("dcEnabled").checked = d.enabled;
+  $("dcHooks").innerHTML = "";
+  for (const hook of d.webhooks) addHookRow(hook);
+  if (!d.webhooks.length) addHookRow();
+  $("dcMessage").value = d.message;
+  $("dcPlaceholders").innerHTML = Object.entries(automation.placeholders)
+    .map(([key, label]) => `<button type="button" data-key="${esc(key)}" title="${esc(label)}">{${esc(key)}}</button>`)
+    .join(" ");
+  for (const b of $("dcPlaceholders").querySelectorAll("button")) b.addEventListener("click", () => insertPlaceholder(b.dataset.key));
+  renderPreview();
+  $("dcTop").value = d.top;
+  $("clEnabled").checked = c.enabled;
+  $("clMode").value = c.mode;
+  $("clQuality").value = c.quality;
+  $("clDir").value = c.dir;
+  for (const [key, el] of CLIP_FIELDS) $(el).value = c[key];
+  showClipMode();
+  autoMessage("");
+  $("autoDialog").showModal();
+}
+$("autoOpen").addEventListener("click", openSettings);
+$("settingsBtn").addEventListener("click", openSettings);
+
+$("autoForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/automation", {
+      method: "POST",
+      body: {
+        discord: { enabled: $("dcEnabled").checked, webhooks: readHooks(), message: $("dcMessage").value, top: $("dcTop").value },
+        clips: {
+          enabled: $("clEnabled").checked,
+          mode: $("clMode").value,
+          quality: $("clQuality").value,
+          dir: $("clDir").value,
+          ...Object.fromEntries(CLIP_FIELDS.map(([key, el]) => [key, $(el).value])),
+        },
+      },
+    });
+    await refreshAutomation();
+    $("autoDialog").close();
+  } catch (err) {
+    autoMessage(err.message, true);
+  }
+});
 
 // ---- Live-Mitschnitt ------------------------------------------------------
 let lastLiveResult;
@@ -1153,6 +1426,7 @@ setInterval(() => {
     .catch(() => {});
   await refreshStatus();
   await refreshLive();
+  refreshAutomation().catch(() => {});
   selectTab(status.twitch ? "vods" : "history");
   const reports = await loadHistory();
   if (status.running) {

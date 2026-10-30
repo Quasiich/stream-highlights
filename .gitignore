@@ -9,3 +9,9 @@ THIRD-PARTY-LICENSES.txt
 settings.json
 # Whisper, Modelle und ffmpeg, die das Programm bei Bedarf lädt
 tools/
+# ffmpeg für den Clip-Schnitt, lädt TwitchDownloaderCLI in den Arbeitsordner
+ffmpeg
+ffmpeg.exe
+ffprobe
+ffprobe.exe
+version.json

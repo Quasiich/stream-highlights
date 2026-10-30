@@ -1,27 +1,83 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const EXE = process.platform === "win32" ? "TwitchDownloaderCLI.exe" : "TwitchDownloaderCLI";
+const FFMPEG = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 const RELEASES_URL = "https://api.github.com/repos/lay295/TwitchDownloader/releases/latest";
 
 /** Namensteil des passenden Release-Downloads, z. B. TwitchDownloaderCLI-1.56.5-Windows-x64.zip */
 const ASSET_SUFFIX: Record<string, string> = {
   "win32-x64": "Windows-x64.zip",
   "linux-x64": "Linux-x64.zip",
+  "darwin-arm64": "MacOSArm64.zip",
+  "darwin-x64": "MacOS-x64.zip",
 };
 
 export type ToolProgress = (message: string, percent?: number) => void;
 
-/** TwitchDownloaderCLI im Programmordner oder im PATH, sonst undefined. */
-export function findTwitchDownloader(): string | undefined {
-  const local = resolve(EXE);
+/** Programm im Programmordner oder im PATH, sonst undefined. */
+function findTool(file: string, name: string): string | undefined {
+  const local = resolve(file);
   if (existsSync(local)) return local;
   // windowsHide: sonst hängt "where" kurz am Konsolenfenster der .exe
-  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["TwitchDownloaderCLI"], { encoding: "utf8", windowsHide: true });
+  const which = spawnSync(process.platform === "win32" ? "where" : "which", [name], { encoding: "utf8", windowsHide: true });
   const found = which.status === 0 ? which.stdout.split(/\r?\n/)[0]?.trim() : "";
   return found || undefined;
+}
+
+/** TwitchDownloaderCLI im Programmordner oder im PATH, sonst undefined. */
+export function findTwitchDownloader(): string | undefined {
+  return findTool(EXE, "TwitchDownloaderCLI");
+}
+
+/** ffmpeg im Programmordner oder im PATH, sonst undefined. */
+export function findFfmpeg(): string | undefined {
+  return findTool(FFMPEG, "ffmpeg");
+}
+
+/**
+ * Startet TwitchDownloaderCLI und meldet Zeilen wie "[STATUS] - Downloading 42%"
+ * als Schritt und Prozent. Schlägt es fehl, steht die letzte Ausgabezeile im Fehler.
+ */
+export function runTwitchDownloader(
+  exe: string,
+  args: string[],
+  failure: string,
+  onStatus: (step: string, percent: number) => void = () => {},
+): Promise<void> {
+  return new Promise<void>((resolveRun, reject) => {
+    const child = spawn(exe, args, { windowsHide: true });
+    let output = "";
+    const onData = (data: Buffer) => {
+      const text = data.toString();
+      output = (output + text).slice(-2000);
+      for (const m of text.matchAll(/\[STATUS\] - ([^\[\r\n]*?)\s*(\d+)%/g)) onStatus(m[1], Number(m[2]));
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", (err) => reject(new Error(`TwitchDownloaderCLI konnte nicht gestartet werden: ${err.message}`)));
+    child.on("close", (code) =>
+      code === 0 ? resolveRun() : reject(new Error(`${failure} fehlgeschlagen (Code ${code}). ${output.trim().split(/\r?\n/).at(-1) ?? ""}`)),
+    );
+  });
+}
+
+/**
+ * Sucht ffmpeg (für den Clip-Schnitt) und lässt es beim ersten Mal von
+ * TwitchDownloaderCLI in den Programmordner laden.
+ */
+export async function ensureFfmpeg(downloader: string, onProgress: ToolProgress = () => {}): Promise<string> {
+  const found = findFfmpeg();
+  if (found) return found;
+  onProgress("Lade ffmpeg (einmalig) …", 0);
+  await runTwitchDownloader(downloader, ["ffmpeg", "--download", "--banner", "false"], "ffmpeg-Download", (_, percent) =>
+    onProgress("Lade ffmpeg (einmalig) …", percent),
+  );
+  if (!existsSync(resolve(FFMPEG))) throw new Error("ffmpeg wurde nicht gefunden, obwohl der Download geklappt hat.");
+  onProgress("ffmpeg installiert.", 100);
+  return resolve(FFMPEG);
 }
 
 /**
