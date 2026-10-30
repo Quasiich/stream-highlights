@@ -282,6 +282,16 @@ export async function fetchLiveStream(userId: string, authPath = AUTH_FILE): Pro
   return s ? { id: String(s.id), startedAt: String(s.started_at), title: String(s.title ?? "") } : undefined;
 }
 
+/** Ein einzelnes VOD (auch fremder Kanäle), z. B. für seine Länge. */
+export async function fetchVod(videoId: string, authPath = AUTH_FILE): Promise<Vod | undefined> {
+  const url = new URL(VIDEOS_URL);
+  url.searchParams.set("id", videoId);
+  const { res } = await helix(url, authPath);
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`Twitch antwortet ${res.status} beim Laden des VODs.`);
+  return parseVods(await res.json()).vods[0];
+}
+
 /** Das VOD zu einem Stream unter den letzten Archiv-VODs des Kanals, falls Twitch eins gespeichert hat. */
 export async function findVodForStream(streamId: string, authPath = AUTH_FILE): Promise<Vod | undefined> {
   const { vods } = await fetchVods(10, undefined, authPath);

@@ -1,6 +1,7 @@
 import type { ChatLog, ChatMessage } from "./chat.ts";
 import { defaultEventMinimums, type EventMinimums } from "./events.ts";
 import type { Marker } from "./twitch.ts";
+import { defaultVoiceOptions, saidDuring, type VoiceOptions, type VoiceSignals } from "./voice.ts";
 
 export interface AnalyzeOptions {
   /** Breite eines Zeitfensters in Sekunden */
@@ -23,6 +24,8 @@ export interface AnalyzeOptions {
   markerTailSeconds: number;
   /** Ab wann Gift-Bomben, Raids und Cheers einzeln aufgelistet werden */
   eventMinimums: EventMinimums;
+  /** Sprache und Lautstärke (Whisper), standardmäßig aus */
+  voice: VoiceOptions;
 }
 
 export const defaultOptions: AnalyzeOptions = {
@@ -36,6 +39,7 @@ export const defaultOptions: AnalyzeOptions = {
   markerLeadSeconds: 60,
   markerTailSeconds: 30,
   eventMinimums: defaultEventMinimums,
+  voice: defaultVoiceOptions,
 };
 
 export interface Bucket {
@@ -49,12 +53,28 @@ export interface Bucket {
   score: number;
 }
 
-/** "marker": vom Streamer markiert, "chat": Chat-Peak, "marker+chat": beides im selben Clip */
-export type HighlightSource = "marker" | "chat" | "marker+chat";
+/**
+ * Kurzform für ältere Auswertungen und Oberflächen: "marker": vom Streamer
+ * markiert, "chat": Chat-Peak, "marker+chat": Marker und weitere Quellen im
+ * selben Clip, "voice": nur Stichwort und/oder Lautstärke. Genauer steht es in
+ * Highlight.sources.
+ */
+export type HighlightSource = "marker" | "chat" | "marker+chat" | "voice";
+
+/** Woher ein Highlight kommt; ein Clip kann mehrere haben */
+export type Signal = "marker" | "chat" | "keyword" | "loud";
 
 export interface Highlight {
   rank: number;
   source: HighlightSource;
+  /** Alle Quellen im Clip, in fester Reihenfolge: marker, keyword, chat, loud */
+  sources: Signal[];
+  /** Gesagte Stichwörter im Clip */
+  keywords: string[];
+  /** Lautstärke-Peak im Clip: so viele dB über der Umgebung */
+  loudDb?: number;
+  /** Was während des Clips gesagt wurde (nur mit Whisper) */
+  said?: string;
   /** Beschreibungen der Streamer-Marker im Clip (leer, wenn keine angegeben) */
   markers: string[];
   /** Zeitpunkt des Markers bzw. des Chat-Peaks (Sekunden) */
@@ -183,14 +203,29 @@ export function buildBuckets(log: ChatLog, opts: AnalyzeOptions = defaultOptions
   return buckets;
 }
 
+/** Höchstens so viele Stichwort-Treffer werden zu Highlights (ein zu allgemeines Stichwort soll die Liste nicht fluten) */
+const MAX_KEYWORD_HIGHLIGHTS = 50;
+/** Ein Schrei kommt meist kurz nach dem Moment */
+const LOUD_LEAD_SECONDS = 30;
+const LOUD_TAIL_SECONDS = 10;
+
 /**
- * Streamer-Marker werden immer zu Highlights und stehen vorne. Danach folgen
- * bis zu `top` Chat-Peaks; liegt ein Chat-Peak bei einem Marker, wird er in
- * dessen Clip eingeschmolzen.
+ * Streamer-Marker und gesagte Stichwörter werden immer zu Highlights und
+ * stehen vorne. Danach folgen bis zu `top` Chat-Peaks und bis zu
+ * `voice.loudTop` Lautstärke-Peaks. Was zeitlich zusammenfällt, wird zu einem
+ * Clip mit mehreren Quellen zusammengeführt.
  */
-export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptions, markers: Marker[] = []): Highlight[] {
+export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptions, markers: Marker[] = [], voice?: VoiceSignals): Highlight[] {
   const buckets = buildBuckets(log, opts);
-  const length = log.length ?? Math.max(buckets.at(-1)!.start + opts.bucketSeconds, ...markers.map((m) => m.offset));
+  const voiceOpts = { ...defaultVoiceOptions, ...opts.voice };
+  const length =
+    log.length ??
+    Math.max(
+      buckets.at(-1)!.start + opts.bucketSeconds,
+      ...markers.map((m) => m.offset),
+      ...(voice?.keywords ?? []).map((k) => k.offset),
+      ...(voice?.loud ?? []).map((l) => l.offset + l.duration),
+    );
   const indexAt = (seconds: number) => Math.max(0, Math.min(buckets.length - 1, Math.floor(seconds / opts.bucketSeconds)));
 
   // Ein Highlight braucht relativ (Score) und absolut (Aktivität) genug Ausschlag.
@@ -206,8 +241,9 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
     while (from > 0 && buckets[from - 1].score >= opts.minScore && b.start - buckets[from - 1].start < 60) from--;
     while (to < buckets.length - 1 && buckets[to + 1].score >= opts.minScore && buckets[to + 1].start - b.start < 60) to++;
     return {
-      source: "chat",
+      kinds: new Set(["chat"]),
       markers: [],
+      keywords: [],
       anchor: b.start,
       peak: b,
       from,
@@ -217,15 +253,20 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
     };
   };
 
-  const markerClipOf = (m: Marker): Clip => {
-    const start = Math.max(0, m.offset - opts.markerLeadSeconds);
-    const end = Math.min(length, m.offset + opts.markerTailSeconds);
+  // Clip um einen festen Zeitpunkt (Marker, Stichwort, Lautstärke). Für Score
+  // und Chatter zählt die stärkste Chat-Reaktion im Clip.
+  const fixedClip = (kind: Signal, at: number, start: number, end: number): Clip => {
+    start = Math.max(0, start);
+    end = Math.min(length, end);
     const from = indexAt(start);
     const to = Math.max(from, indexAt(end - 1));
-    // Für Score und Chatter zählt die stärkste Chat-Reaktion im Clip.
     const peak = buckets.slice(from, to + 1).reduce((best, b) => (b.score > best.score ? b : best));
-    return { source: "marker", markers: m.description ? [m.description] : [], anchor: m.offset, peak, from, to, start, end };
+    return { kinds: new Set([kind]), markers: [], keywords: [], anchor: at, peak, from, to, start, end };
   };
+  const markerClipOf = (m: Marker): Clip => ({
+    ...fixedClip("marker", m.offset, m.offset - opts.markerLeadSeconds, m.offset + opts.markerTailSeconds),
+    markers: m.description ? [m.description] : [],
+  });
 
   // Liegt ein Kandidat zu nah an einem gewählten Highlight oder überlappen
   // sich die Clips, wird er in dieses Highlight eingeschmolzen statt doppelt
@@ -252,9 +293,29 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
   };
 
   for (const m of [...markers].sort((a, b) => a.offset - b.offset)) add(markerClipOf(m));
+  for (const k of (voice?.keywords ?? []).slice(0, MAX_KEYWORD_HIGHLIGHTS)) {
+    add({
+      ...fixedClip("keyword", k.offset, k.offset - voiceOpts.keywordLeadSeconds, k.offset + voiceOpts.keywordTailSeconds),
+      keywords: [k.keyword],
+    });
+  }
+  let chatCount = 0;
   for (const c of candidates) {
-    if (picked.filter((p) => p.source === "chat").length >= opts.top) break;
-    add(clipOf(c));
+    if (chatCount >= opts.top) break;
+    const clip = clipOf(c);
+    if (!picked.some((p) => near(p, clip))) chatCount++;
+    add(clip);
+  }
+  // Lautstärke: stärkste zuerst. Liegt ein Peak bei einem vorhandenen Highlight,
+  // wird er nur dort vermerkt; neue Highlights gibt es höchstens loudTop.
+  let loudCount = 0;
+  for (const l of [...(voice?.loud ?? [])].sort((a, b) => b.db - a.db)) {
+    const clip = { ...fixedClip("loud", l.offset, l.offset - LOUD_LEAD_SECONDS, l.offset + l.duration + LOUD_TAIL_SECONDS), loudDb: l.db };
+    if (!picked.some((p) => near(p, clip))) {
+      if (loudCount >= voiceOpts.loudTop) continue;
+      loudCount++;
+    }
+    add(clip);
   }
 
   return picked.map((clip, i) => {
@@ -263,9 +324,14 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
       (m) => !isNoise(m) && m.offset >= buckets[clip.from].start && m.offset < buckets[clip.to].start + opts.bucketSeconds,
     );
 
+    const sources = (["marker", "keyword", "chat", "loud"] as const).filter((k) => clip.kinds.has(k));
     return {
       rank: i + 1,
-      source: clip.source,
+      source: legacySource(clip.kinds),
+      sources,
+      keywords: [...new Set(clip.keywords)],
+      ...(clip.loudDb !== undefined ? { loudDb: clip.loudDb } : {}),
+      ...(voice?.segments.length ? { said: saidDuring(voice.segments, clip.start, clip.end) } : {}),
       markers: clip.markers,
       peak: clip.anchor,
       start: clip.start,
@@ -280,8 +346,10 @@ export function findHighlights(log: ChatLog, opts: AnalyzeOptions = defaultOptio
 }
 
 interface Clip {
-  source: HighlightSource;
+  kinds: Set<Signal>;
   markers: string[];
+  keywords: string[];
+  loudDb?: number;
   /** Zeitpunkt des Markers bzw. Chat-Peaks, nach dem der Clip benannt ist */
   anchor: number;
   /** Stärkstes Chat-Fenster des Clips */
@@ -295,13 +363,20 @@ interface Clip {
 
 /** Erweitert `host` um `other`; der Zeitpunkt von `host` bleibt (er wurde zuerst gewählt). */
 function merge(host: Clip, other: Clip): void {
-  if (host.source !== other.source) host.source = "marker+chat";
+  for (const k of other.kinds) host.kinds.add(k);
   host.markers = [...host.markers, ...other.markers];
+  host.keywords = [...host.keywords, ...other.keywords];
+  if (other.loudDb !== undefined) host.loudDb = Math.max(host.loudDb ?? -Infinity, other.loudDb);
   if (other.peak.score > host.peak.score) host.peak = other.peak;
   host.from = Math.min(host.from, other.from);
   host.to = Math.max(host.to, other.to);
   host.start = Math.min(host.start, other.start);
   host.end = Math.max(host.end, other.end);
+}
+
+function legacySource(kinds: Set<Signal>): HighlightSource {
+  if (kinds.has("marker")) return kinds.size > 1 ? "marker+chat" : "marker";
+  return kinds.has("chat") ? "chat" : "voice";
 }
 
 function topWords(msgs: ChatMessage[], n: number): string[] {

@@ -8,14 +8,20 @@ import { collectEvents, type EventMinimums, type EventSummary, isNotable, type S
 import { toMarkdown } from "./format.ts";
 import { ensureTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, fetchMarkers, type Marker } from "./twitch.ts";
+import type { KeywordHit, VoiceSignals, WhisperModel } from "./voice.ts";
+import { analyzeVoice } from "./whisper.ts";
 
 export const OUTPUT_DIR = "output";
 
 export interface Progress {
-  stage: "tools" | "chat" | "markers" | "analyze";
+  stage: "tools" | "chat" | "markers" | "setup" | "audio" | "transcribe" | "analyze";
   message: string;
   /** 0–100, falls bekannt */
   percent?: number;
+  /** Geschätzte Restzeit dieses Schritts in Sekunden, falls bekannt */
+  eta?: number;
+  /** Geschätzte Restzeit bis zum Ergebnis in Sekunden, falls bekannt */
+  totalEta?: number;
 }
 
 /** Inhalt von highlights.json */
@@ -30,6 +36,23 @@ export interface Report {
   markerNote?: string;
   /** list enthält nur Events ab den Mindestwerten, mit denen analysiert wurde */
   events: { summary: EventSummary; list: StreamEvent[]; minimums: EventMinimums };
+  /** Nur wenn die Sprach-Auswertung eingeschaltet war und geklappt hat */
+  voice?: {
+    model: WhisperModel;
+    language: string;
+    gpu: boolean;
+    keywords: string[];
+    hits: KeywordHit[];
+    loudness: boolean;
+    loudDb: number;
+    loudMinSeconds: number;
+    loudPeaks: number;
+    segments: number;
+    /** Dauer der Transkription in Sekunden; fehlt, wenn ein vorhandenes Transkript benutzt wurde */
+    transcribeSeconds?: number;
+  };
+  /** Warum die Sprach-Auswertung fehlt, obwohl sie eingeschaltet war */
+  voiceNote?: string;
 }
 
 export interface AnalysisResult {
@@ -68,8 +91,38 @@ export async function runAnalysis(
 
   const { markers, note } = log.videoId ? await loadMarkers(log.videoId, onProgress) : { markers: [], note: undefined };
 
-  onProgress({ stage: "analyze", message: "Werte Chat aus …" });
-  const highlights = findHighlights(log, opts, markers);
+  let voice: VoiceSignals | undefined;
+  let voiceReport: Report["voice"];
+  let voiceNote: string | undefined;
+  if (opts.voice?.enabled) {
+    if (!log.videoId) {
+      voiceNote = "Sprach-Auswertung übersprungen: Für den Ton wird die VOD-ID gebraucht.";
+    } else {
+      try {
+        const result = await analyzeVoice(log.videoId, join(outDir, log.videoId), opts.voice, log.length, onProgress);
+        voice = result.signals;
+        voiceReport = {
+          model: result.info.model,
+          language: result.info.language,
+          gpu: result.info.gpu,
+          keywords: opts.voice.keywords,
+          hits: voice.keywords,
+          loudness: opts.voice.loudness,
+          loudDb: opts.voice.loudDb,
+          loudMinSeconds: opts.voice.loudMinSeconds,
+          loudPeaks: voice.loud.length,
+          segments: voice.segments.length,
+          transcribeSeconds: result.info.transcribeSeconds,
+        };
+      } catch (err: any) {
+        // Ohne Sprache geht es mit Chat und Markern weiter
+        voiceNote = `Sprach-Auswertung fehlgeschlagen: ${err.message}`;
+      }
+    }
+  }
+
+  onProgress({ stage: "analyze", message: voice ? "Werte Chat, Sprache und Lautstärke aus …" : "Werte Chat aus …" });
+  const highlights = findHighlights(log, opts, markers, voice);
   const events = collectEvents(log);
 
   const report: Report = {
@@ -84,6 +137,8 @@ export async function runAnalysis(
       list: events.filter((e) => isNotable(e, opts.eventMinimums)),
       minimums: opts.eventMinimums,
     },
+    ...(voiceReport ? { voice: voiceReport } : {}),
+    ...(voiceNote ? { voiceNote } : {}),
   };
 
   const dir = join(outDir, log.videoId ?? "local");

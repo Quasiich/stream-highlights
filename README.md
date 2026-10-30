@@ -286,6 +286,76 @@ sudo systemctl enable --now stream-highlights-live
 journalctl -u stream-highlights-live -f
 ```
 
+## Sprache & Lautstärke (optional, Whisper)
+
+Zusätzlich zum Chat kann stream-highlights auswerten, was im Stream **gesagt**
+wird und wo es **laut** wird. Eingeschaltet wird das in der Oberfläche unter
+**Sprache & Lautstärke (Whisper)**; ohne Haken ändert sich nichts.
+
+- **Stichwörter:** Du legst eine Liste fest (eins pro Zeile), z. B.
+  `clip das`, `oh mein gott`, `was war das`. Sagt der Streamer eins davon, wird
+  die Stelle immer zum Highlight, wie ein Streamer-Marker (40 s Vorlauf, weil
+  man es meist erst nach dem Moment sagt). Groß-/Kleinschreibung und
+  Satzzeichen spielen keine Rolle, gesucht werden ganze Wörter: `clip` passt
+  auf „Clip das“, aber nicht auf „Clipboard“. Mit `*` am Ende passt jede
+  Fortsetzung: `clip*` findet auch „clippen“ und „clippt“.
+- **Laute Stellen:** Whisper selbst misst keine Lautstärke. Das Programm misst
+  deshalb selbst den Pegel jeder Sekunde (Effektivwert in dBFS) und vergleicht
+  ihn mit dem Median der umliegenden ±2,5 Minuten. Eine Stelle gilt als laut,
+  wenn sie mindestens **x dB lauter** ist als diese Umgebung, und das
+  **mindestens y Sekunden** lang (Standard: 12 dB, 2 s). Zur Einordnung:
+  +6 dB ist hörbar lauter, +10 bis +12 dB wird etwa als doppelt so laut
+  empfunden, +20 dB ist sehr laut. Ein fester Wert („über −10 dB“) würde nicht
+  funktionieren, weil jeder Stream anders ausgesteuert ist. Gemessen wird der
+  ganze Stream-Ton, also Stimme, Spiel und Musik zusammen.
+  Liegt eine laute Stelle bei einem anderen Highlight, wird sie dort vermerkt
+  (🔊 +14 dB). Neue Highlights entstehen nur aus den stärksten lauten Stellen
+  (Standard: höchstens 5).
+- **Was gesagt wurde:** Bei jedem Highlight steht der Text, der in dem Moment
+  gesprochen wurde, auch in `highlights.md`.
+
+### Dauer und Fortschritt
+
+Vor dem Start zeigt die Oberfläche, wie lange es voraussichtlich dauert. Das
+hängt vor allem von der Länge des Streams, dem Modell und davon ab, ob eine
+Nvidia-Grafikkarte da ist. Nach der ersten Auswertung misst das Programm, wie
+schnell dein PC tatsächlich ist, und schätzt danach genauer. Während der
+Auswertung siehst du je Schritt Prozent und Restzeit sowie die Restzeit bis zum
+Ergebnis.
+
+| Genauigkeit | Modell | Größe | Grafikkarte* | Prozessor* |
+|---|---|---|---|---|
+| Schnell | base | 148 MB | ca. 2 Min. | ca. 20 Min. |
+| Ausgewogen (Standard) | small | 488 MB | ca. 4 Min. | ca. 50 Min. |
+| Genau | large-v3-turbo | 574 MB | ca. 7 Min. | ca. 2,5 Std. |
+
+\* grobe Startwerte für 3 Stunden Stream; sie werden nach dem ersten Lauf durch
+die gemessenen ersetzt.
+
+### Was dabei passiert
+
+1. Beim ersten Mal lädt das Programm in den Ordner `tools/`: Whisper
+   ([whisper.cpp](https://github.com/ggml-org/whisper.cpp), mit Nvidia-Karte
+   der CUDA-Build), das gewählte Modell und ffmpeg (über TwitchDownloaderCLI).
+   Läuft der CUDA-Build auf dem PC nicht, wechselt es von selbst auf den
+   Prozessor und merkt sich das.
+2. Es lädt nur die **Tonspur** des VODs (ca. 70 MB pro Stunde), wandelt sie
+   um, misst die Lautstärke und lässt Whisper laufen.
+3. In `output/<VOD-ID>/` bleiben `transcript.json` und `loudness.json` liegen,
+   die Ton-Dateien werden gelöscht. Wird dasselbe VOD erneut analysiert, etwa
+   mit anderen Stichwörtern oder dB-Werten, dauert das nur Sekunden. Nur ein
+   anderes Modell oder eine andere Sprache transkribiert neu.
+4. Klappt die Sprach-Auswertung nicht (z. B. kein Internet), gibt es trotzdem
+   das normale Ergebnis aus Chat und Markern, mit einem Hinweis.
+
+Die Einstellungen werden gespeichert und gelten auch für den Live-Mitschnitt.
+
+Kommandozeile: `--voice`, `--model base|small|large-v3-turbo`,
+`--language de|en|auto`, `--keywords "clip das,oh mein gott"`, `--loud-db 12`,
+`--no-loud`. Außerhalb von Windows gibt es keine fertigen Whisper-Builds: dort
+whisper.cpp selbst bauen und `whisper-cli` in den PATH legen (oder
+`WHISPER_CLI` auf die Datei setzen); ffmpeg muss installiert sein.
+
 ## So wird bewertet
 
 - Der Stream wird in 30-Sekunden-Fenster geteilt.
@@ -303,6 +373,9 @@ journalctl -u stream-highlights-live -f
 - Der Clip beginnt 45 s vor dem Peak, weil der Chat erst reagiert, nachdem
   etwas passiert ist.
 - Streamer-Marker gehen allem vor und bekommen 60 s Vorlauf.
+- Mit Whisper: Gesagte Stichwörter werden ebenfalls immer Highlights. Laute
+  Stellen werden bei vorhandenen Highlights vermerkt und ergeben höchstens 5
+  eigene. Fällt etwas zeitlich zusammen, wird es ein Clip mit mehreren Quellen.
 
 ## Entwicklung
 
