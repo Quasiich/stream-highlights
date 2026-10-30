@@ -1,5 +1,14 @@
 import { CLIP_QUALITIES, type ClipSettings, clipFolder, cutClips, defaultClipSettings } from "./clips.ts";
-import { clipsMessage, defaultDiscordSettings, type DiscordSettings, highlightsMessage, isWebhookUrl, postToDiscord } from "./discord.ts";
+import {
+  clipsMessage,
+  DEFAULT_MESSAGE,
+  defaultDiscordSettings,
+  type DiscordSettings,
+  type DiscordWebhook,
+  highlightsMessage,
+  isWebhookUrl,
+  postToAll,
+} from "./discord.ts";
 import { type ClipFile, OUTPUT_DIR, type Progress, type Report, writeReport } from "./pipeline.ts";
 import { loadSettings, SETTINGS_FILE, type Settings } from "./settings.ts";
 
@@ -15,17 +24,32 @@ function range(value: unknown, fallback: number, min: number, max: number): numb
   return value !== "" && value !== null && value !== undefined && Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 }
 
+const MAX_WEBHOOKS = 10;
+const MAX_MESSAGE = 1000;
+
+/** Webhooks aus den Einstellungen; ältere settings.json hatten nur eine webhookUrl */
+export function webhookList(d: any): DiscordWebhook[] {
+  const raw: any[] = Array.isArray(d?.webhooks) ? d.webhooks : typeof d?.webhookUrl === "string" ? [{ url: d.webhookUrl }] : [];
+  return raw
+    .map((w) => ({ name: typeof w?.name === "string" ? w.name.trim().slice(0, 50) : "", url: typeof w?.url === "string" ? w.url.trim() : "" }))
+    .filter((w) => w.url);
+}
+
 /** Prüft und vervollständigt Einstellungen aus settings.json bzw. der Oberfläche */
 export function normalizeAutomation(raw: Pick<Settings, "discord" | "clips"> = {}): AutomationSettings {
   const d: any = raw.discord ?? {};
   const c: any = raw.clips ?? {};
-  const webhookUrl = typeof d.webhookUrl === "string" ? d.webhookUrl.trim() : "";
+  const webhooks = webhookList(d)
+    .filter((w) => isWebhookUrl(w.url))
+    .slice(0, MAX_WEBHOOKS);
+  const message = typeof d.message === "string" && d.message.trim() ? d.message.trim().slice(0, MAX_MESSAGE) : DEFAULT_MESSAGE;
   const lengthSeconds = range(c.lengthSeconds, defaultClipSettings.lengthSeconds, 5, 600);
   return {
     discord: {
-      enabled: Boolean(d.enabled) && isWebhookUrl(webhookUrl),
-      webhookUrl,
+      enabled: Boolean(d.enabled) && webhooks.length > 0,
+      webhooks,
       top: range(d.top, defaultDiscordSettings.top, 1, 25),
+      message,
     },
     clips: {
       enabled: Boolean(c.enabled),
@@ -45,10 +69,26 @@ export async function loadAutomation(file = SETTINGS_FILE): Promise<AutomationSe
   return normalizeAutomation(await loadSettings(file));
 }
 
-/** Postet die Highlights, auch wenn der automatische Post aus ist (für den Knopf in der Oberfläche) */
-export async function sendHighlights(report: Report, s: DiscordSettings): Promise<void> {
-  if (!s.webhookUrl) throw new Error("Bitte zuerst unter „Nach der Auswertung“ eine Discord-Webhook-URL eintragen.");
-  await postToDiscord(s.webhookUrl, highlightsMessage(report, s.top));
+/**
+ * Postet die Highlights an alle Webhooks, auch wenn der automatische Post aus
+ * ist (für den Knopf in der Oberfläche). Gibt zurück, wohin gepostet wurde,
+ * und wirft, wenn es bei mindestens einem Webhook nicht geklappt hat.
+ */
+export async function sendHighlights(report: Report, s: DiscordSettings): Promise<string[]> {
+  return sendToAll(s.webhooks, highlightsMessage(report, s.top, s.message));
+}
+
+async function sendToAll(webhooks: DiscordWebhook[], payload: Parameters<typeof postToAll>[1]): Promise<string[]> {
+  if (!webhooks.length) throw new Error("Bitte zuerst in den Einstellungen einen Discord-Webhook eintragen.");
+  const results = await postToAll(webhooks, payload);
+  const failed = results.filter((r) => r.error);
+  if (failed.length) {
+    const sent = results.length - failed.length;
+    throw new Error(
+      `${sent ? `An ${sent} von ${results.length} Webhooks gesendet. ` : ""}${failed.map((r) => `${r.name}: ${r.error}`).join(" ")}`,
+    );
+  }
+  return results.map((r) => r.name);
 }
 
 /** Schneidet die Clips und merkt sie sich in highlights.json */
@@ -78,8 +118,8 @@ export async function runAutomation(
 ): Promise<void> {
   if (s.discord.enabled) {
     try {
-      await sendHighlights(report, s.discord);
-      log("Highlights in Discord gepostet.");
+      const sent = await sendHighlights(report, s.discord);
+      log(`Highlights in Discord gepostet (${sent.join(", ")}).`);
     } catch (err: any) {
       log(`Discord: ${err.message}`);
     }
@@ -95,7 +135,7 @@ export async function runAutomation(
     const folder = clipFolder(report, s.clips, outDir);
     log(`${clips.length} Clips gespeichert in ${folder}`);
     if (s.discord.enabled && clips.length) {
-      await postToDiscord(s.discord.webhookUrl, clipsMessage(report, clips, folder)).catch((err) => log(`Discord: ${err.message}`));
+      await sendToAll(s.discord.webhooks, clipsMessage(report, clips, folder)).catch((err) => log(`Discord: ${err.message}`));
     }
   } catch (err: any) {
     log(`Clips: ${err.message}`);

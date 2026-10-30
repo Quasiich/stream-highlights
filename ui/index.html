@@ -187,7 +187,24 @@
   .note.ok { color: var(--ok); }
   .auto-summary { list-style: none; margin: 0 0 10px; padding: 0; font-size: 13px; display: grid; gap: 4px; }
   .auto-summary .dot { display: inline-block; margin-right: 6px; }
-  #autoDialog { width: min(640px, calc(100vw - 32px)); }
+  #autoDialog { width: min(680px, calc(100vw - 32px)); }
+  textarea {
+    width: 100%; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 9px 12px;
+    font: inherit; color: var(--text); resize: vertical;
+  }
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .field-head { margin: 16px 0 4px; }
+  .field-note { margin: 0 0 8px; }
+  .hooks { display: grid; gap: 8px; margin-bottom: 8px; }
+  .hook { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+  @media (max-width: 560px) { .hook { grid-template-columns: 1fr auto auto; } .hook input:first-child { grid-column: 1 / -1; } }
+  .hook-status { grid-column: 1 / -1; font-size: 12px; margin-top: -4px; }
+  .hook-status.ok { color: var(--ok); }
+  .hook-status.error { color: var(--error); }
+  .placeholders { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .placeholders button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 999px; padding: 1px 8px; cursor: pointer; font-size: 12px; color: var(--text); }
+  .placeholders button:hover { border-color: var(--accent); }
+  .preview { background: var(--panel-2); border-radius: 8px; padding: 8px 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
   .score { font-weight: 700; font-variant-numeric: tabular-nums; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -216,6 +233,7 @@
   <div class="spacer"></div>
   <div class="chip" id="twitchChip"><span class="dot" id="twitchDot"></span><span id="twitchText">Twitch …</span></div>
   <button class="btn small" id="twitchBtn">Mit Twitch verbinden</button>
+  <button class="btn small" id="settingsBtn">⚙ Einstellungen</button>
 </header>
 
 <section class="update-banner hidden" id="updateBanner" role="status" aria-live="polite">
@@ -351,18 +369,25 @@
 
 <dialog id="autoDialog">
   <form id="autoForm">
-    <h2>Nach der Auswertung</h2>
-    <p class="small muted">Gilt automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es im Ergebnis die Knöpfe „An Discord senden“ und „Clips schneiden“, die dieselben Einstellungen nutzen.</p>
+    <h2>Einstellungen</h2>
+    <p class="small muted">Discord und Clips laufen automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es im Ergebnis die Knöpfe „An Discord senden“ und „Clips schneiden“, die dieselben Einstellungen nutzen.</p>
     <fieldset class="thresholds">
-      <legend>Discord</legend>
-      <label class="check small"><input type="checkbox" id="dcEnabled"> Highlights automatisch in einen Discord-Kanal posten</label>
+      <legend>Discord-Benachrichtigung</legend>
+      <label class="check small"><input type="checkbox" id="dcEnabled"> Highlights nach jedem Stream automatisch posten</label>
+
+      <h3 class="field-head">Webhooks</h3>
+      <p class="small muted field-note">Jeder Post geht an alle eingetragenen Webhooks, also in alle Kanäle. In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → Webhook-URL kopieren.</p>
+      <div id="dcHooks" class="hooks"></div>
+      <button class="btn small" type="button" id="dcAdd">+ Webhook hinzufügen</button>
+
+      <h3 class="field-head">Text über den Highlights</h3>
+      <textarea id="dcMessage" rows="2" maxlength="1000" aria-label="Text über den Highlights"></textarea>
+      <div class="placeholders small muted">Platzhalter (anklicken zum Einfügen): <span id="dcPlaceholders"></span></div>
+      <div class="preview small"><span class="muted">Vorschau:</span> <span id="dcPreview"></span></div>
+      <button class="link-btn small" type="button" id="dcResetMessage">Standardtext</button>
+
       <div class="options">
-        <label class="wide">Webhook-URL <input type="text" id="dcUrl" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false"></label>
         <label>Highlights im Post <input type="number" id="dcTop" min="1" max="25"></label>
-      </div>
-      <div class="thresholds-foot">
-        <span class="small muted">In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → URL kopieren.</span>
-        <button class="btn small" type="button" id="dcTest">Testnachricht senden</button>
       </div>
     </fieldset>
     <fieldset class="thresholds">
@@ -822,8 +847,8 @@ async function showReport(id) {
   $("sendDiscord").addEventListener("click", async () => {
     $("sendDiscord").disabled = true;
     try {
-      await api(base + "/discord", { method: "POST" });
-      resultNote("Highlights in Discord gepostet.");
+      const res = await api(base + "/discord", { method: "POST" });
+      resultNote("Highlights in Discord gepostet: " + res.sent.join(", ") + ".");
     } catch (err) {
       resultNote(err.message, true);
     } finally {
@@ -878,7 +903,9 @@ async function refreshAutomation() {
   automation = await api("/api/automation");
   const d = automation.discord, c = automation.clips;
   $("autoDiscordDot").classList.toggle("on", d.enabled);
-  $("autoDiscordText").textContent = d.enabled ? "Discord: postet die besten " + d.top : "Discord: aus";
+  $("autoDiscordText").textContent = d.enabled
+    ? "Discord: die besten " + d.top + " an " + (d.webhooks.length === 1 ? "1 Webhook" : d.webhooks.length + " Webhooks")
+    : "Discord: aus";
   $("autoClipsDot").classList.toggle("on", c.enabled);
   $("autoClipsText").textContent = c.enabled
     ? "Clips: " + c.count + " Stück, " + (c.mode === "fixed" ? c.lengthSeconds + " s" : "Highlight-Länge, max. " + c.maxLengthSeconds + " s")
@@ -900,11 +927,82 @@ function autoMessage(message, isError = false) {
   $(isError ? "autoError" : "autoNote").textContent = message;
 }
 
-$("autoOpen").addEventListener("click", async () => {
+// Beispielwerte für die Vorschau, wie bei der Testnachricht
+const SAMPLE_VARS = { kanal: "scuse", titel: "Dienstagsmodus", anzahl: "5", gesamt: "10", datum: "30.10.2026", link: "https://www.twitch.tv/videos/2912392719" };
+
+function renderPreview() {
+  const text = ($("dcMessage").value.trim() || automation.defaultMessage).replace(/\{(\w+)\}/g, (m, key) => SAMPLE_VARS[key.toLowerCase()] ?? m);
+  // **fett** wie in Discord darstellen
+  $("dcPreview").innerHTML = esc(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+}
+$("dcMessage").addEventListener("input", renderPreview);
+$("dcResetMessage").addEventListener("click", () => {
+  $("dcMessage").value = automation.defaultMessage;
+  renderPreview();
+});
+
+function insertPlaceholder(key) {
+  const area = $("dcMessage");
+  const at = area.selectionStart ?? area.value.length;
+  area.value = area.value.slice(0, at) + "{" + key + "}" + area.value.slice(area.selectionEnd ?? at);
+  area.focus();
+  area.selectionStart = area.selectionEnd = at + key.length + 2;
+  renderPreview();
+}
+
+function addHookRow(hook = { name: "", url: "" }) {
+  const row = document.createElement("div");
+  row.className = "hook";
+  row.innerHTML = `
+    <input type="text" class="hook-name" placeholder="Name, z. B. Mods" maxlength="50" aria-label="Name des Webhooks" autocomplete="off">
+    <input type="text" class="hook-url" placeholder="https://discord.com/api/webhooks/…" aria-label="Webhook-URL" autocomplete="off" spellcheck="false">
+    <button class="btn small" type="button" data-test>Testnachricht senden</button>
+    <button class="btn small" type="button" data-remove aria-label="Webhook entfernen" title="Entfernen">✕</button>
+    <div class="hook-status hidden" role="status"></div>`;
+  row.querySelector(".hook-name").value = hook.name;
+  row.querySelector(".hook-url").value = hook.url;
+  row.querySelector("[data-remove]").addEventListener("click", () => row.remove());
+  const testBtn = row.querySelector("[data-test]");
+  const statusEl = row.querySelector(".hook-status");
+  testBtn.addEventListener("click", async () => {
+    testBtn.disabled = true;
+    statusEl.className = "hook-status";
+    statusEl.textContent = "Sende …";
+    try {
+      await api("/api/automation/test", { method: "POST", body: { url: row.querySelector(".hook-url").value, message: $("dcMessage").value } });
+      statusEl.className = "hook-status ok";
+      statusEl.textContent = "Gesendet. Schau in den Discord-Kanal.";
+    } catch (err) {
+      statusEl.className = "hook-status error";
+      statusEl.textContent = err.message;
+    } finally {
+      testBtn.disabled = false;
+    }
+  });
+  $("dcHooks").appendChild(row);
+  return row;
+}
+$("dcAdd").addEventListener("click", () => addHookRow().querySelector(".hook-name").focus());
+
+function readHooks() {
+  return [...$("dcHooks").querySelectorAll(".hook")]
+    .map((row) => ({ name: row.querySelector(".hook-name").value.trim(), url: row.querySelector(".hook-url").value.trim() }))
+    .filter((h) => h.url);
+}
+
+async function openSettings() {
   await refreshAutomation();
   const d = automation.discord, c = automation.clips;
   $("dcEnabled").checked = d.enabled;
-  $("dcUrl").value = d.webhookUrl;
+  $("dcHooks").innerHTML = "";
+  for (const hook of d.webhooks) addHookRow(hook);
+  if (!d.webhooks.length) addHookRow();
+  $("dcMessage").value = d.message;
+  $("dcPlaceholders").innerHTML = Object.entries(automation.placeholders)
+    .map(([key, label]) => `<button type="button" data-key="${esc(key)}" title="${esc(label)}">{${esc(key)}}</button>`)
+    .join(" ");
+  for (const b of $("dcPlaceholders").querySelectorAll("button")) b.addEventListener("click", () => insertPlaceholder(b.dataset.key));
+  renderPreview();
   $("dcTop").value = d.top;
   $("clEnabled").checked = c.enabled;
   $("clMode").value = c.mode;
@@ -914,19 +1012,9 @@ $("autoOpen").addEventListener("click", async () => {
   showClipMode();
   autoMessage("");
   $("autoDialog").showModal();
-});
-
-$("dcTest").addEventListener("click", async () => {
-  $("dcTest").disabled = true;
-  try {
-    await api("/api/automation/test", { method: "POST", body: { webhookUrl: $("dcUrl").value } });
-    autoMessage("Testnachricht gesendet. Schau in den Discord-Kanal.");
-  } catch (err) {
-    autoMessage(err.message, true);
-  } finally {
-    $("dcTest").disabled = false;
-  }
-});
+}
+$("autoOpen").addEventListener("click", openSettings);
+$("settingsBtn").addEventListener("click", openSettings);
 
 $("autoForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -934,7 +1022,7 @@ $("autoForm").addEventListener("submit", async (e) => {
     await api("/api/automation", {
       method: "POST",
       body: {
-        discord: { enabled: $("dcEnabled").checked, webhookUrl: $("dcUrl").value, top: $("dcTop").value },
+        discord: { enabled: $("dcEnabled").checked, webhooks: readHooks(), message: $("dcMessage").value, top: $("dcTop").value },
         clips: {
           enabled: $("clEnabled").checked,
           mode: $("clMode").value,

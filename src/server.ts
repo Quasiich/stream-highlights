@@ -4,8 +4,8 @@ import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
-import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendHighlights } from "./automation.ts";
-import { postToDiscord, testMessage } from "./discord.ts";
+import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendHighlights, webhookList } from "./automation.ts";
+import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
 import { type LiveService, startLive } from "./livemode.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
@@ -142,19 +142,26 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return send(res, 202, { id });
   }
 
-  if (path === "/api/automation" && req.method === "GET") return send(res, 200, await loadAutomation());
+  if (path === "/api/automation" && req.method === "GET") {
+    return send(res, 200, { ...(await loadAutomation()), placeholders: MESSAGE_PLACEHOLDERS, defaultMessage: DEFAULT_MESSAGE });
+  }
 
   if (path === "/api/automation" && req.method === "POST") {
     const body = await readJson(req);
+    const invalid = webhookList(body.discord).findIndex((w) => !isWebhookUrl(w.url));
+    if (invalid >= 0) {
+      const name = webhookList(body.discord)[invalid].name || `Webhook ${invalid + 1}`;
+      return send(res, 400, { error: `${name}: Das ist keine gültige Discord-Webhook-URL (https://discord.com/api/webhooks/…).` });
+    }
     const s = normalizeAutomation(body);
-    if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte eine gültige Discord-Webhook-URL eintragen." });
+    if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte mindestens einen Discord-Webhook eintragen." });
     await updateSettings({ discord: { ...s.discord }, clips: { ...s.clips } });
     return send(res, 200, s);
   }
 
   if (path === "/api/automation/test" && req.method === "POST") {
     const body = await readJson(req);
-    await postToDiscord(String(body.webhookUrl ?? ""), testMessage());
+    await postToDiscord(String(body.url ?? ""), testMessage(typeof body.message === "string" ? body.message.trim() : undefined));
     return send(res, 200, { ok: true });
   }
 
@@ -162,8 +169,8 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
   if (req.method === "POST" && discordMatch) {
     const report = await readReport(discordMatch[1]);
     if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
-    await sendHighlights(report, (await loadAutomation()).discord);
-    return send(res, 200, { ok: true });
+    const sent = await sendHighlights(report, (await loadAutomation()).discord);
+    return send(res, 200, { sent });
   }
 
   const clipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/clips$/);

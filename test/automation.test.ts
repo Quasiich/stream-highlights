@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Highlight } from "../src/analyze.ts";
 import { normalizeAutomation } from "../src/automation.ts";
 import { clipFileName, clipRanges, defaultClipSettings } from "../src/clips.ts";
-import { escapeMarkdown, highlightsMessage, isWebhookUrl, postToDiscord } from "../src/discord.ts";
+import { DEFAULT_MESSAGE, escapeMarkdown, highlightsMessage, isWebhookUrl, postToAll, postToDiscord, renderMessage, testMessage } from "../src/discord.ts";
 import type { Report } from "../src/pipeline.ts";
 
 const WEBHOOK = "https://discord.com/api/webhooks/123456789/abc-DEF_42";
@@ -54,9 +54,22 @@ test("Dateiname aus Rang und Startzeit", () => {
   assert.equal(clipFileName({ rank: 3, start: 3725, end: 3785 }), "03_1-02-05.mp4");
 });
 
+test("mehrere Webhooks, ungültige fallen weg, alte settings.json mit einer webhookUrl geht weiter", () => {
+  const s = normalizeAutomation({
+    discord: {
+      enabled: true,
+      webhooks: [{ name: " Mods ", url: WEBHOOK }, { name: "kaputt", url: "https://example.com" }, { name: "leer", url: "" }, { url: `${WEBHOOK}2` }],
+      message: "   ",
+    },
+  });
+  assert.deepEqual(s.discord.webhooks, [{ name: "Mods", url: WEBHOOK }, { name: "", url: `${WEBHOOK}2` }]);
+  assert.equal(s.discord.message, DEFAULT_MESSAGE, "leerer Text → Standardtext");
+  assert.deepEqual(normalizeAutomation({ discord: { webhookUrl: WEBHOOK } }).discord.webhooks, [{ name: "", url: WEBHOOK }]);
+});
+
 test("Einstellungen werden begrenzt und ohne gültigen Webhook nicht automatisch gepostet", () => {
   const s = normalizeAutomation({
-    discord: { enabled: true, webhookUrl: "https://example.com/hook", top: 99 },
+    discord: { enabled: true, webhooks: [{ url: "https://example.com/hook" }], top: 99 },
     clips: { enabled: true, mode: "fixed", count: 0, lengthSeconds: 30, leadSeconds: 45, quality: "4k", dir: "  /srv/clips " },
   });
   assert.equal(s.discord.enabled, false);
@@ -97,6 +110,24 @@ test("Discord-Post: beste Highlights mit Links, ohne Pings und Formatierung aus 
   assert.equal(embed.url, "https://www.twitch.tv/videos/2912392719");
   assert.equal(embed.fields[0].name, "Subs, Raids & Bits");
   assert.equal(escapeMarkdown("a|b`c"), "a\\|b\\`c");
+});
+
+test("eigener Text mit Platzhaltern, unbekannte bleiben stehen", () => {
+  const r = report([highlight(1, 500, 455, 515), highlight(2, 1000, 955, 1015)]);
+  r.video.channel = "scuse_tv";
+  const msg = highlightsMessage(r, 1, "{KANAL} hat {anzahl}/{gesamt} Highlights: {link} {unbekannt}");
+  assert.equal(msg.content, "scuse\\_tv hat 1/2 Highlights: https://www.twitch.tv/videos/2912392719 {unbekannt}");
+  assert.equal(renderMessage("x".repeat(3000), {}).length, 2000, "Discord erlaubt höchstens 2000 Zeichen");
+  assert.match(testMessage("Hallo {kanal}").content, /Hallo scuse$/);
+});
+
+test("an mehrere Webhooks: ein Fehler hält die anderen nicht auf", async () => {
+  const hooks = [{ name: "Mods", url: WEBHOOK }, { name: "", url: `${WEBHOOK}x` }];
+  const results = await postToAll(hooks, { username: "x", content: "y", allowed_mentions: { parse: [] } }, (async (url: string) =>
+    new Response(null, { status: url.endsWith("x") ? 404 : 204 })) as typeof fetch);
+  assert.deepEqual(results[0], { name: "Mods" });
+  assert.equal(results[1].name, "Webhook 2");
+  assert.match(results[1].error!, /kennt diesen Webhook nicht/);
 });
 
 test("Discord: Rate-Limit wird einmal abgewartet, die URL steht nie im Fehler", async () => {

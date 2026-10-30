@@ -302,15 +302,27 @@ Optional kann das Programm nach jeder Live-Auswertung automatisch
   herunterzuladen. Beim ersten Mal lädt TwitchDownloaderCLI dafür ffmpeg in
   den Programmordner (ca. 80 MB).
 
-Eingestellt wird das links unter **Nach der Auswertung** → **Einstellungen**.
-Für alle anderen Analysen gibt es im Ergebnis die Knöpfe **An Discord senden**
-und **Clips schneiden**, die dieselben Einstellungen nutzen.
+Eingestellt wird das über **⚙ Einstellungen** oben rechts (oder links unter
+**Nach der Auswertung**). Für alle anderen Analysen gibt es im Ergebnis die
+Knöpfe **An Discord senden** und **Clips schneiden**, die dieselben
+Einstellungen nutzen.
 
-**Discord:** In Discord den Kanal bearbeiten → Integrationen → Webhooks →
-Neuer Webhook → Webhook-URL kopieren und in den Einstellungen eintragen. Mit
-**Testnachricht senden** lässt sie sich prüfen. Die URL wie ein Passwort
-behandeln: Wer sie kennt, kann in den Kanal schreiben. Pings wie `@everyone`
-aus dem Chat werden nie ausgelöst.
+**Discord:**
+
+- **Webhooks:** In Discord den Kanal bearbeiten → Integrationen → Webhooks →
+  Neuer Webhook → Webhook-URL kopieren und in den Einstellungen eintragen. Es
+  gehen mehrere (z. B. „Mods“ und „Community“), jeder Post geht dann in alle
+  Kanäle. **Testnachricht senden** neben jedem Webhook prüft ihn und zeigt
+  gleich den eigenen Text mit Beispielwerten. Die URLs wie Passwörter
+  behandeln: Wer sie kennt, kann in den Kanal schreiben.
+- **Text über den Highlights:** frei wählbar, mit Platzhaltern `{kanal}`,
+  `{titel}`, `{anzahl}`, `{gesamt}`, `{datum}` und `{link}`. Standard:
+  `Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}`.
+  Discord-Formatierung wie `**fett**` geht.
+- **Highlights im Post:** wie viele der besten Highlights gelistet werden.
+
+Pings wie `@everyone` werden nie ausgelöst, weder aus dem Chat noch aus dem
+eigenen Text.
 
 **Clips:**
 
@@ -332,7 +344,12 @@ neu:
 
 ```json
 {
-  "discord": { "enabled": true, "webhookUrl": "https://discord.com/api/webhooks/…", "top": 5 },
+  "discord": {
+    "enabled": true,
+    "webhooks": [{ "name": "Mods", "url": "https://discord.com/api/webhooks/…" }],
+    "message": "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}",
+    "top": 5
+  },
   "clips": { "enabled": true, "mode": "highlight", "count": 5, "paddingSeconds": 5, "maxLengthSeconds": 180, "lengthSeconds": 60, "leadSeconds": 45, "quality": "1080p", "dir": "/srv/clips" }
 }
 ```

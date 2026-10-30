@@ -2,16 +2,50 @@ import type { Highlight } from "./analyze.ts";
 import { clock, vodLink } from "./format.ts";
 import type { ClipFile, Report } from "./pipeline.ts";
 
+export interface DiscordWebhook {
+  /** Nur zur Unterscheidung in Oberfläche und Fehlermeldungen, z. B. "Mods" */
+  name: string;
+  /** Siehe README. Geheim halten: Wer die URL kennt, kann in den Kanal schreiben. */
+  url: string;
+}
+
 export interface DiscordSettings {
   /** Nach jeder Live-Auswertung automatisch posten */
   enabled: boolean;
-  /** Webhook des Kanals, siehe README. Geheim halten: Wer ihn kennt, kann in den Kanal schreiben. */
-  webhookUrl: string;
+  /** Jeder Post geht an alle Webhooks (also in alle eingetragenen Kanäle) */
+  webhooks: DiscordWebhook[];
   /** So viele Highlights stehen im Post */
   top: number;
+  /** Text über den Highlights, mit Platzhaltern wie {kanal}, siehe MESSAGE_PLACEHOLDERS */
+  message: string;
 }
 
-export const defaultDiscordSettings: DiscordSettings = { enabled: false, webhookUrl: "", top: 5 };
+export const DEFAULT_MESSAGE = "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}";
+
+/** Platzhalter für den eigenen Text, mit Beschreibung für die Oberfläche */
+export const MESSAGE_PLACEHOLDERS: Record<string, string> = {
+  kanal: "Kanalname",
+  titel: "Stream-Titel",
+  anzahl: "Highlights im Post",
+  gesamt: "Highlights insgesamt",
+  datum: "Datum der Auswertung",
+  link: "Link zum VOD",
+};
+
+/** Beispielwerte für Testnachricht und Vorschau */
+const SAMPLE_VARS: Record<string, string> = {
+  kanal: "scuse",
+  titel: "Dienstagsmodus",
+  anzahl: "5",
+  gesamt: "10",
+  datum: "30.10.2026",
+  link: "https://www.twitch.tv/videos/2912392719",
+};
+
+export const defaultDiscordSettings: DiscordSettings = { enabled: false, webhooks: [], top: 5, message: DEFAULT_MESSAGE };
+
+/** Discord erlaubt so viele Zeichen im Text einer Nachricht */
+const MAX_CONTENT = 2000;
 
 export interface DiscordPayload {
   username: string;
@@ -47,8 +81,25 @@ function highlightLine(h: Highlight, videoId: string | undefined): string {
   return `**#${h.rank}** ${time} (${clock(h.end - h.start)}) · ${what}${words}`;
 }
 
+/** Setzt die Platzhalter ein; unbekannte wie {foo} bleiben stehen */
+export function renderMessage(template: string, vars: Record<string, string>): string {
+  return truncate(template.replace(/\{(\w+)\}/g, (match, key: string) => vars[key.toLowerCase()] ?? match), MAX_CONTENT);
+}
+
+function messageVars(report: Report, count: number): Record<string, string> {
+  const v = report.video;
+  return {
+    kanal: escapeMarkdown(v.channel || "Stream"),
+    titel: escapeMarkdown(v.title || (v.id ? `VOD ${v.id}` : "Stream")),
+    anzahl: String(count),
+    gesamt: String(report.highlights.length),
+    datum: new Date(report.analyzedAt).toLocaleDateString("de-DE"),
+    link: v.id ? `https://www.twitch.tv/videos/${v.id}` : "",
+  };
+}
+
 /** Post mit den besten Highlights einer Analyse */
-export function highlightsMessage(report: Report, top: number): DiscordPayload {
+export function highlightsMessage(report: Report, top: number, template = DEFAULT_MESSAGE): DiscordPayload {
   const v = report.video;
   const list = [...report.highlights].sort((a, b) => a.rank - b.rank).slice(0, top);
   const lines = list.map((h) => highlightLine(h, v.id));
@@ -68,7 +119,7 @@ export function highlightsMessage(report: Report, top: number): DiscordPayload {
   return {
     username: "stream-highlights",
     content: list.length
-      ? `Neue Highlights${v.channel ? ` von **${escapeMarkdown(v.channel)}**` : ""}: die besten ${list.length} von ${report.highlights.length}`
+      ? renderMessage(template, messageVars(report, list.length))
       : `Stream${v.channel ? ` von **${escapeMarkdown(v.channel)}**` : ""} ausgewertet, keine deutlichen Highlights gefunden.`,
     embeds: [
       {
@@ -96,12 +147,37 @@ export function clipsMessage(report: Report, clips: ClipFile[], folder: string):
   };
 }
 
-export function testMessage(): DiscordPayload {
+/** Testnachricht mit einer Vorschau des eigenen Textes (Beispielwerte) */
+export function testMessage(template = DEFAULT_MESSAGE): DiscordPayload {
   return {
     username: "stream-highlights",
-    content: "✅ Testnachricht von stream-highlights: Der Webhook funktioniert. Hier erscheinen künftig die Highlights nach jedem Stream.",
+    content: truncate(
+      "✅ Testnachricht von stream-highlights: Der Webhook funktioniert. So beginnt künftig der Post nach jedem Stream:\n\n" +
+        renderMessage(template || DEFAULT_MESSAGE, SAMPLE_VARS),
+      MAX_CONTENT,
+    ),
     allowed_mentions: { parse: [] },
   };
+}
+
+export const webhookLabel = (w: DiscordWebhook, index: number) => w.name || `Webhook ${index + 1}`;
+
+/** Schickt an alle Webhooks; ein Fehler bei einem hält die anderen nicht auf. */
+export async function postToAll(
+  webhooks: DiscordWebhook[],
+  payload: DiscordPayload,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ name: string; error?: string }[]> {
+  return Promise.all(
+    webhooks.map(async (w, i) => {
+      try {
+        await postToDiscord(w.url, payload, fetchImpl);
+        return { name: webhookLabel(w, i) };
+      } catch (err: any) {
+        return { name: webhookLabel(w, i), error: err.message as string };
+      }
+    }),
+  );
 }
 
 /**
