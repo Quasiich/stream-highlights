@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/p
 import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { ensureTwitchDownloader } from "./tools.ts";
+import { ensureTwitchDownloader, tarCommand } from "./tools.ts";
 import {
   estimate,
   type Estimate,
@@ -33,7 +33,9 @@ const WIN = process.platform === "win32";
 export const WHISPER_DIR = join("tools", "whisper");
 const MODELS_DIR = join(WHISPER_DIR, "models");
 const STATS_FILE = join(WHISPER_DIR, "stats.json");
-const RELEASES_URL = "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest";
+// Nicht /latest: Die Versions-Releases (v1.9.5) kommen inzwischen ohne Dateien, die
+// fertigen Builds stehen in eigenen Releases (b5454) daneben.
+const RELEASES_URL = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=15";
 const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 const WHISPER_EXE = WIN ? "whisper-cli.exe" : "whisper-cli";
 const FFMPEG_EXE = WIN ? "ffmpeg.exe" : "ffmpeg";
@@ -185,6 +187,21 @@ async function ensureModel(model: WhisperModel, onProgress: OnProgress): Promise
 }
 
 /**
+ * Neuestes Release mit passendem Windows-Download. Der CUDA-Build hieß bis
+ * v1.9.4 "whisper-cublas-12.4.0-bin-x64.zip", seitdem
+ * "whisper-bin-win-cuda-12.4.0-x64.zip".
+ */
+export function pickWhisperAsset(releases: any[], variant: Variant): { release: any; asset: any } | undefined {
+  const pattern = variant === "cuda" ? /^whisper-(cublas-12[\d.]*-bin|bin-win-cuda-12[\d.]*)-x64\.zip$/i : /^whisper-bin-x64\.zip$/i;
+  for (const release of releases) {
+    if (release?.draft) continue;
+    const asset = (release?.assets ?? []).find((a: any) => pattern.test(a.name));
+    if (asset) return { release, asset };
+  }
+  return undefined;
+}
+
+/**
  * whisper.cpp aus dem offiziellen GitHub-Release (ggml-org/whisper.cpp). Mit
  * Nvidia-Grafikkarte der CUDA-Build, sonst der normale. Außerhalb von Windows
  * gibt es keine fertigen Builds; dort muss whisper-cli installiert sein.
@@ -199,14 +216,13 @@ async function ensureWhisper(variant: Variant, onProgress: OnProgress): Promise<
     );
   }
   onProgress({ stage: "setup", message: "Suche aktuelle Version von Whisper …" });
-  const release: any = await (await fetch(RELEASES_URL, { headers: { Accept: "application/vnd.github+json" } })).json();
-  const assets: any[] = release.assets ?? [];
-  const pattern = variant === "cuda" ? /^whisper-cublas-12[\d.]*-bin-x64\.zip$/i : /^whisper-bin-x64\.zip$/i;
-  const asset = assets.find((a) => pattern.test(a.name));
-  if (!asset) {
+  const releases: any = await (await fetch(RELEASES_URL, { headers: { Accept: "application/vnd.github+json" } })).json();
+  const pick = pickWhisperAsset(Array.isArray(releases) ? releases : [], variant);
+  if (!pick) {
     if (variant === "cuda") return ensureWhisper("cpu", onProgress);
-    throw new Error(`Kein passender Whisper-Download im Release ${release.tag_name ?? "?"} gefunden.`);
+    throw new Error("Kein passender Whisper-Download in den aktuellen Releases von whisper.cpp gefunden.");
   }
+  const { release, asset } = pick;
 
   const target = join(WHISPER_DIR, variant);
   await mkdir(WHISPER_DIR, { recursive: true });
@@ -220,7 +236,7 @@ async function ensureWhisper(variant: Variant, onProgress: OnProgress): Promise<
     );
     const out = join(tmp, "x");
     await mkdir(out);
-    const unpacked = spawnSync("tar", ["-xf", zip, "-C", out], { encoding: "utf8", windowsHide: true });
+    const unpacked = spawnSync(tarCommand(), ["-xf", zip, "-C", out], { encoding: "utf8", windowsHide: true });
     if (unpacked.status !== 0) throw new Error(`Entpacken fehlgeschlagen: ${unpacked.stderr || unpacked.error?.message}`);
     if (!findFile(out, WHISPER_EXE)) throw new Error(`${WHISPER_EXE} nicht im Download gefunden.`);
     await rm(target, { recursive: true, force: true });

@@ -17,6 +17,17 @@ const ASSET_SUFFIX: Record<string, string> = {
 
 export type ToolProgress = (message: string, percent?: number) => void;
 
+/**
+ * Entpacker für die Zips. Unter Windows immer das mitgelieferte tar aus
+ * System32: Ein GNU-tar weiter vorne im PATH (Git for Windows, MSYS2, Cygwin)
+ * hält "C:\…" für einen Netzwerk-Rechner und bricht ab.
+ */
+export function tarCommand(): string {
+  if (process.platform !== "win32") return "tar";
+  const system = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+  return existsSync(system) ? system : "tar";
+}
+
 /** Programm im Programmordner oder im PATH, sonst undefined. */
 function findTool(file: string, name: string): string | undefined {
   const local = resolve(file);
@@ -122,7 +133,7 @@ export async function ensureTwitchDownloader(onProgress: ToolProgress = () => {}
   try {
     const zip = join(tmp, asset.name);
     await writeFile(zip, Buffer.concat(chunks));
-    const unpacked = spawnSync("tar", ["-xf", zip, "-C", tmp], { encoding: "utf8" });
+    const unpacked = spawnSync(tarCommand(), ["-xf", zip, "-C", tmp], { encoding: "utf8", windowsHide: true });
     if (unpacked.status !== 0) throw new Error(`Entpacken fehlgeschlagen: ${unpacked.stderr || unpacked.error?.message}`);
     if (!existsSync(join(tmp, EXE))) throw new Error(`${EXE} nicht im Download gefunden.`);
     await rename(join(tmp, EXE), resolve(EXE));

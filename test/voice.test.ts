@@ -17,7 +17,7 @@ import {
   saidDuring,
   type Segment,
 } from "../src/voice.ts";
-import { measureLoudness, parseWhisperJson } from "../src/whisper.ts";
+import { measureLoudness, parseWhisperJson, pickWhisperAsset } from "../src/whisper.ts";
 
 const seg = (start: number, text: string, end = start + 4): Segment => ({ start, end, text });
 
@@ -177,4 +177,20 @@ test("findHighlights ohne Sprache bleibt wie bisher", () => {
   const hl = findHighlights(calmChat(), defaultOptions, [{ offset: 600, description: "" }]);
   assert.deepEqual(hl.map((h) => h.sources), [["marker"]]);
   assert.equal(hl[0].said, undefined);
+});
+
+test("pickWhisperAsset nimmt das neueste Release mit passendem Download, alte und neue Dateinamen", () => {
+  const asset = (name: string) => ({ name, browser_download_url: `https://example.invalid/${name}` });
+  const releases = [
+    { tag_name: "v1.9.5", assets: [] },
+    {
+      tag_name: "b5454",
+      assets: [asset("whisper-bin-x64.zip"), asset("whisper-bin-win-cuda-11.8.0-x64.zip"), asset("whisper-bin-win-cuda-12.4.0-x64.zip")],
+    },
+    { tag_name: "b5130", assets: [asset("whisper-bin-x64.zip"), asset("whisper-cublas-12.4.0-bin-x64.zip")] },
+  ];
+  assert.equal(pickWhisperAsset(releases, "cpu")?.release.tag_name, "b5454");
+  assert.equal(pickWhisperAsset(releases, "cuda")?.asset.name, "whisper-bin-win-cuda-12.4.0-x64.zip");
+  assert.equal(pickWhisperAsset([releases[0], releases[2]], "cuda")?.asset.name, "whisper-cublas-12.4.0-bin-x64.zip");
+  assert.equal(pickWhisperAsset([releases[0]], "cpu"), undefined);
 });
