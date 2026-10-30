@@ -7,3 +7,5 @@ dist/
 COPYRIGHT.txt
 THIRD-PARTY-LICENSES.txt
 settings.json
+# Whisper, Modelle und ffmpeg, die das Programm bei Bedarf lädt
+tools/

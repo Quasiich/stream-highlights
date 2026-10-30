@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { defaultOptions } from "./analyze.ts";
-import { toConsole } from "./format.ts";
+import { duration, toConsole } from "./format.ts";
 import { OUTPUT_DIR, runAnalysis } from "./pipeline.ts";
+import { defaultVoiceOptions, parseVoiceOptions } from "./voice.ts";
 
 const usage = `Verwendung:
   npm run analyze -- <VOD-ID oder VOD-Link oder chat.json> [Optionen]
@@ -21,6 +22,15 @@ Optionen:
   --min-bits <n>   Cheers ab n Bits einzeln auflisten (Standard ${defaultOptions.eventMinimums.bits})
   --out <ordner>   Ausgabeordner (Standard ${OUTPUT_DIR})
 
+Sprache und Lautstärke (optional, Whisper):
+  --voice            einschalten
+  --model <name>     base, small oder large-v3-turbo (Standard ${defaultVoiceOptions.model})
+  --language <code>  de, en oder auto (Standard ${defaultVoiceOptions.language})
+  --keywords <liste> Stichwörter, mit Komma getrennt; "*" am Ende für Wortanfänge
+                     (Standard: ${defaultVoiceOptions.keywords.join(", ")})
+  --loud-db <dB>     so viel lauter als die Umgebung gilt als Peak (Standard ${defaultVoiceOptions.loudDb})
+  --no-loud          Lautstärke nicht auswerten
+
 Nach \`npm run login\` werden bei VODs des eigenen Kanals die Stream-Marker
 mitgeladen und immer als Highlight übernommen (siehe README).
 `;
@@ -37,6 +47,12 @@ async function main() {
       "min-raid": { type: "string" },
       "min-bits": { type: "string" },
       out: { type: "string", default: OUTPUT_DIR },
+      voice: { type: "boolean" },
+      model: { type: "string" },
+      language: { type: "string" },
+      keywords: { type: "string" },
+      "loud-db": { type: "string" },
+      "no-loud": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -58,15 +74,24 @@ async function main() {
       raidViewers: num(values["min-raid"], defaultOptions.eventMinimums.raidViewers),
       bits: num(values["min-bits"], defaultOptions.eventMinimums.bits),
     },
+    voice: parseVoiceOptions({
+      enabled: values.voice,
+      model: values.model,
+      language: values.language,
+      keywords: values.keywords,
+      loudness: !values["no-loud"],
+      loudDb: values["loud-db"],
+    }),
   };
 
   let lastLine = "";
   const { log, highlights, events, report, dir } = await runAnalysis(
     input,
     opts,
-    ({ message, percent }) => {
+    ({ message, percent, eta, totalEta }) => {
       // Fortschritt in einer Zeile überschreiben, fertige Schritte stehen lassen
-      const line = percent === undefined ? message : `${message} ${percent}%`;
+      const left = totalEta ?? eta;
+      const line = (percent === undefined ? message : `${message} ${percent}%`) + (left !== undefined && percent !== 100 ? ` · noch ${duration(left)}` : "");
       if (line === lastLine) return;
       process.stdout.write(`\r${line.padEnd(lastLine.length)}${percent === undefined || percent === 100 ? "\n" : ""}`);
       lastLine = percent === undefined || percent === 100 ? "" : line;

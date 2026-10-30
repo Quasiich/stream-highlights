@@ -8,7 +8,9 @@ import { type LiveService, startLive } from "./livemode.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
 import { findTwitchDownloader } from "./tools.ts";
-import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
+import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVod, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
+import { defaultVoiceOptions, parseVoiceOptions, type VoiceOptions, WHISPER_MODELS, type WhisperModel } from "./voice.ts";
+import { detectGpu, estimateVoice } from "./whisper.ts";
 import { canSelfUpdate, checkForUpdate, deleteBackup, installUpdate, launchNewVersion, readBackup, VERSION } from "./update.ts";
 
 export const PORT = 4777;
@@ -18,6 +20,8 @@ export const SETTINGS_FILE = "settings.json";
 interface Settings {
   /** Live-Mitschnitt beim Start einschalten, mit diesen Analyse-Einstellungen */
   live?: { enabled: boolean; options?: Record<string, unknown> };
+  /** Zuletzt benutzte Einstellungen für Sprache und Lautstärke */
+  voice?: VoiceOptions;
 }
 
 interface Job {
@@ -113,8 +117,26 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
         minGifts: defaultOptions.eventMinimums.giftedSubs,
         minRaid: defaultOptions.eventMinimums.raidViewers,
         minBits: defaultOptions.eventMinimums.bits,
+        voice: defaultVoiceOptions,
+      },
+      voice: {
+        settings: (await loadSettings()).voice ?? defaultVoiceOptions,
+        models: Object.entries(WHISPER_MODELS).map(([id, m]) => ({ id, label: m.label, sizeMb: m.sizeMb })),
+        gpu: detectGpu(),
+        // Fertige Whisper-Builds gibt es nur für Windows; sonst muss whisper-cli installiert sein
+        platform: process.platform === "win32" ? "windows" : process.platform,
       },
     });
+  }
+
+  if (req.method === "GET" && path === "/api/voice/estimate") {
+    const model = (url.searchParams.get("model") ?? "") in WHISPER_MODELS ? (url.searchParams.get("model") as WhisperModel) : defaultVoiceOptions.model;
+    const id = parseVideoId(url.searchParams.get("id") ?? "");
+    let length = Number(url.searchParams.get("length")) || undefined;
+    if (!length && id) length = (await readReport(id))?.video.length;
+    if (!length && id && existsSync(AUTH_FILE)) length = (await fetchVod(id).catch(() => undefined))?.length;
+    if (!length) return send(res, 200, { length: null, perHour: await estimateVoice(3600, model) });
+    return send(res, 200, { length, ...(await estimateVoice(length, model, id ? join(OUTPUT_DIR, id) : undefined)) });
   }
 
   if (req.method === "GET" && path === "/api/reports") return send(res, 200, await listReports());
@@ -142,6 +164,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     if (!parseVideoId(input)) return send(res, 400, { error: "Bitte einen VOD-Link oder eine VOD-ID angeben, z. B. https://www.twitch.tv/videos/2912392719" });
     const opts = analyzeOptions(body);
     if (body.refresh) await rm(join(OUTPUT_DIR, parseVideoId(input)!, "chat.json"), { force: true });
+    if (body.voice) await saveSettings({ voice: opts.voice });
 
     const current: Job = { id: Date.now().toString(36), input, messages: [], listeners: new Set(), finished: false };
     job = current;
@@ -272,6 +295,7 @@ function analyzeOptions(body: any): AnalyzeOptions {
       raidViewers: num(body.minRaid, defaultOptions.eventMinimums.raidViewers),
       bits: num(body.minBits, defaultOptions.eventMinimums.bits),
     },
+    voice: parseVoiceOptions(body.voice),
   };
 }
 
@@ -345,9 +369,11 @@ async function setLive(enabled: boolean, options?: Record<string, unknown>): Pro
       throw err;
     }
   }
-  const settings = await loadSettings();
-  settings.live = { enabled: live.enabled, options: live.options };
-  await writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  await saveSettings({ live: { enabled: live.enabled, options: live.options } });
+}
+
+async function saveSettings(changes: Partial<Settings>): Promise<void> {
+  await writeFile(SETTINGS_FILE, JSON.stringify({ ...(await loadSettings()), ...changes }, null, 2));
 }
 
 async function stopLive(error?: string) {

@@ -21,6 +21,14 @@ export function twitchTime(seconds: number): string {
   return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m${String(s % 60).padStart(2, "0")}s`;
 }
 
+/** Restzeit lesbar: 40 → "ca. 40 s", 380 → "ca. 6 Min.", 4300 → "ca. 1 Std. 12 Min." */
+export function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `ca. ${Math.max(5, Math.ceil(s / 5) * 5)} s`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `ca. ${m} Min.` : `ca. ${Math.floor(m / 60)} Std.${m % 60 ? ` ${m % 60} Min.` : ""}`;
+}
+
 export function vodLink(videoId: string | undefined, seconds: number): string {
   return videoId ? `https://www.twitch.tv/videos/${videoId}?t=${twitchTime(seconds)}` : clock(seconds);
 }
@@ -47,13 +55,17 @@ export function toConsole(
   ];
   if (highlights.length === 0) lines.push("Keine deutlichen Chat-Peaks gefunden.");
   for (const h of highlights) {
-    const what =
-      h.source === "chat"
-        ? `Peak ${clock(h.peak)}, ${h.score}× normal, ${h.chatters} Chatter`
-        : `★ Streamer-Marker ${clock(h.peak)}${h.source === "marker+chat" ? `, Chat ${h.score}× normal` : ""}`;
+    const sources = h.sources ?? [h.source === "chat" ? "chat" : "marker"];
+    const what = [
+      sources.includes("marker") ? `★ Streamer-Marker ${clock(h.peak)}` : "",
+      sources.includes("keyword") ? `Gesagt: ${h.keywords.map((k) => `„${k}“`).join(", ")}` : "",
+      sources.includes("chat") ? `Chat ${h.score}× normal, ${h.chatters} Chatter` : "",
+      sources.includes("loud") ? `laut: +${h.loudDb} dB` : "",
+    ].filter(Boolean).join(", ");
     lines.push(`#${h.rank}  ${clock(h.start)} – ${clock(h.end)}  (${what})`, `    ${vodLink(log.videoId, h.start)}`);
     if (h.markers.length) lines.push(`    Marker: ${h.markers.join(" / ")}`);
     if (h.topWords.length) lines.push(`    Chat: ${h.topWords.join(", ")}`);
+    if (h.said) lines.push(`    Gesprochen: „${h.said}“`);
     lines.push("");
   }
 
@@ -76,24 +88,34 @@ export function toMarkdown(
   const cell = (s: string) => s.replace(/\|/g, "\\|");
   const rows = highlights.map(
     (h) =>
-      `| ${h.rank} | ${cell(sourceLabel(h))} | [${clock(h.start)}](${vodLink(log.videoId, h.start)}) | ${clock(h.end - h.start)} | ${h.score}× | ${h.chatters} | ${cell(h.topWords.slice(0, 3).join(", "))} |`,
+      `| ${h.rank} | ${cell(sourceLabel(h))} | [${clock(h.start)}](${vodLink(log.videoId, h.start)}) | ${clock(h.end - h.start)} | ${h.score}× | ${h.chatters} | ${cell(h.topWords.slice(0, 3).join(", "))} |` +
+      (highlights.some((x) => x.said) ? ` ${cell(h.said ?? "")} |` : ""),
   );
   return [
     `# Highlights: ${log.title ?? log.videoId ?? "VOD"}`,
     "",
-    "| # | Quelle | Start | Dauer | Ausschlag | Chatter | Chat sagt |",
-    "|---|---|---|---|---|---|---|",
+    `| # | Quelle | Start | Dauer | Ausschlag | Chatter | Chat sagt |${highlights.some((h) => h.said) ? " Gesprochen |" : ""}`,
+    `|---|---|---|---|---|---|---|${highlights.some((h) => h.said) ? "---|" : ""}`,
     ...rows,
     "",
     ...eventsMarkdown(log, events, min),
   ].join("\n");
 }
 
-/** "★ Marker: Boss besiegt", "★ Marker + Chat", "Chat" */
+/** "★ Marker: Boss besiegt + Chat", "Gesagt: „clip das“ + Laut (+14 dB)", "Chat" */
 function sourceLabel(h: Highlight): string {
-  if (h.source === "chat") return "Chat";
-  const label = h.source === "marker+chat" ? "★ Marker + Chat" : "★ Marker";
-  return h.markers.length ? `${label}: ${h.markers.join(" / ")}` : label;
+  const sources = h.sources ?? (h.source === "chat" ? ["chat"] : h.source === "marker" ? ["marker"] : ["marker", "chat"]);
+  return sources
+    .map((s) =>
+      s === "marker"
+        ? h.markers.length ? `★ Marker: ${h.markers.join(" / ")}` : "★ Marker"
+        : s === "keyword"
+          ? `Gesagt: ${h.keywords.map((k) => `„${k}“`).join(", ")}`
+          : s === "loud"
+            ? `Laut (+${h.loudDb} dB)`
+            : "Chat",
+    )
+    .join(" + ");
 }
 
 function eventsMarkdown(log: ChatLog, events: StreamEvent[], min: EventMinimums): string[] {
