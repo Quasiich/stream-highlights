@@ -65,14 +65,14 @@ export async function startLive(opts: LiveServiceOptions): Promise<LiveService> 
   const recorder = new LiveRecorder(userId, auth.login, {
     ...opts,
     log,
-    async onFinished(result: AnalysisResult) {
+    async onFinished(result: AnalysisResult, finishedLog: (line: string) => void) {
       last = {
         id: result.report.video.id ?? result.dir,
         title: result.report.video.title,
         highlights: result.highlights.length,
         at: new Date().toISOString(),
       };
-      await opts.onFinished?.(result);
+      await opts.onFinished?.(result, finishedLog);
     },
   });
   const sync = () => recorder.sync().catch((err) => log(`Abgleich fehlgeschlagen: ${err.message}`));

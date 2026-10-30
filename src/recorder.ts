@@ -40,8 +40,8 @@ export interface RecorderOptions {
   vodAttempts: number;
   vodRetryMs: number;
   log: (line: string) => void;
-  /** Wird nach jeder fertigen Analyse aufgerufen (später z. B. für Discord) */
-  onFinished?: (result: AnalysisResult) => void | Promise<void>;
+  /** Wird nach jeder fertigen Analyse aufgerufen (Discord, Clips), mit dem Protokoll des Mitschnitts */
+  onFinished?: (result: AnalysisResult, log: (line: string) => void) => void | Promise<void>;
 }
 
 /** Sekunden zwischen zwei Zeitpunkten (ISO bzw. ms) */
@@ -343,7 +343,7 @@ export class LiveRecorder {
       await rm(chatPath, { force: true });
       await rm(join(this.liveDir, `${streamId}.json`), { force: true });
       log(`Fertig: ${result.highlights.length} Highlights in ${join(result.dir, "highlights.md")}`);
-      await this.opts.onFinished?.(result);
+      await this.opts.onFinished?.(result, log);
       return result;
     } catch (err: any) {
       log(`Auswertung von Stream ${streamId} fehlgeschlagen: ${err.message}`);

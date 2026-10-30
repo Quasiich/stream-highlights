@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { defaultOptions } from "./analyze.ts";
+import { loadAutomation, makeClips, sendHighlights } from "./automation.ts";
+import { clipFolder } from "./clips.ts";
 import { toConsole } from "./format.ts";
-import { OUTPUT_DIR, runAnalysis } from "./pipeline.ts";
+import { OUTPUT_DIR, type Progress, runAnalysis } from "./pipeline.ts";
+import { SETTINGS_FILE } from "./settings.ts";
 
 const usage = `Verwendung:
   npm run analyze -- <VOD-ID oder VOD-Link oder chat.json> [Optionen]
@@ -20,6 +23,9 @@ Optionen:
   --min-raid <n>   Raids ab n Zuschauern einzeln auflisten (Standard ${defaultOptions.eventMinimums.raidViewers})
   --min-bits <n>   Cheers ab n Bits einzeln auflisten (Standard ${defaultOptions.eventMinimums.bits})
   --out <ordner>   Ausgabeordner (Standard ${OUTPUT_DIR})
+  --clips          Danach die Highlights als MP4 aus dem VOD schneiden
+  --discord        Danach die Highlights in Discord posten
+  --settings <datei>  Einstellungen für --clips und --discord (Standard ${SETTINGS_FILE})
 
 Nach \`npm run login\` werden bei VODs des eigenen Kanals die Stream-Marker
 mitgeladen und immer als Highlight übernommen (siehe README).
@@ -37,6 +43,9 @@ async function main() {
       "min-raid": { type: "string" },
       "min-bits": { type: "string" },
       out: { type: "string", default: OUTPUT_DIR },
+      clips: { type: "boolean" },
+      discord: { type: "boolean" },
+      settings: { type: "string", default: SETTINGS_FILE },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -61,22 +70,29 @@ async function main() {
   };
 
   let lastLine = "";
-  const { log, highlights, events, report, dir } = await runAnalysis(
-    input,
-    opts,
-    ({ message, percent }) => {
-      // Fortschritt in einer Zeile überschreiben, fertige Schritte stehen lassen
-      const line = percent === undefined ? message : `${message} ${percent}%`;
-      if (line === lastLine) return;
-      process.stdout.write(`\r${line.padEnd(lastLine.length)}${percent === undefined || percent === 100 ? "\n" : ""}`);
-      lastLine = percent === undefined || percent === 100 ? "" : line;
-    },
-    values.out!,
-  );
+  const progress = ({ message, percent }: Progress) => {
+    // Fortschritt in einer Zeile überschreiben, fertige Schritte stehen lassen
+    const line = percent === undefined ? message : `${message} ${percent}%`;
+    if (line === lastLine) return;
+    process.stdout.write(`\r${line.padEnd(lastLine.length)}${percent === undefined || percent === 100 ? "\n" : ""}`);
+    lastLine = percent === undefined || percent === 100 ? "" : line;
+  };
+  const { log, highlights, events, report, dir } = await runAnalysis(input, opts, progress, values.out!);
 
   if (report.markerNote) console.log(`Hinweis: ${report.markerNote}`);
   console.log(`\n${toConsole(log, highlights, events, opts.eventMinimums)}`);
   console.log(`Gespeichert: ${join(dir, "highlights.json")} und highlights.md`);
+
+  if (!values.clips && !values.discord) return;
+  const automation = await loadAutomation(values.settings!);
+  if (values.discord) {
+    await sendHighlights(report, automation.discord);
+    console.log("Highlights in Discord gepostet.");
+  }
+  if (values.clips) {
+    const clips = await makeClips(report, dir, automation.clips, values.out!, progress, (line) => console.log(`\n${line}`));
+    console.log(`${clips.length} Clips in ${clipFolder(report, automation.clips, values.out!)}`);
+  }
 }
 
 function num(value: string | undefined, fallback: number): number {

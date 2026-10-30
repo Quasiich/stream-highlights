@@ -1,8 +1,10 @@
 import { parseArgs } from "node:util";
 import { defaultOptions } from "./analyze.ts";
+import { loadAutomation, runAutomation } from "./automation.ts";
 import { startLive } from "./livemode.ts";
 import { OUTPUT_DIR } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
+import { SETTINGS_FILE } from "./settings.ts";
 
 const usage = `Verwendung:
   npm run live [-- Optionen]
@@ -21,6 +23,8 @@ Optionen:
                    Stream komplett per TwitchDownloaderCLI geladen
                    (Standard 120, 0 = nie)
   --out <ordner>   Ausgabeordner (Standard ${OUTPUT_DIR})
+  --settings <datei>  Einstellungen für Discord und Clips nach der Auswertung
+                   (Standard ${SETTINGS_FILE}, wird nach jedem Stream neu gelesen)
 `;
 
 async function main() {
@@ -29,6 +33,7 @@ async function main() {
       grace: { type: "string" },
       "max-gap": { type: "string" },
       out: { type: "string", default: OUTPUT_DIR },
+      settings: { type: "string", default: SETTINGS_FILE },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -45,6 +50,7 @@ async function main() {
     ...opts,
     // Ohne gültige Anmeldung beenden, damit systemd/journalctl den Fehler zeigt
     onFatal: () => process.exit(1),
+    onFinished: async (result, log) => runAutomation(result, await loadAutomation(values.settings!), log, values.out!),
   });
 
   const shutdown = () => service.stop().then(() => process.exit(0));

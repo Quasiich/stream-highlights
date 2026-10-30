@@ -7,3 +7,9 @@ dist/
 COPYRIGHT.txt
 THIRD-PARTY-LICENSES.txt
 settings.json
+# ffmpeg für den Clip-Schnitt, lädt TwitchDownloaderCLI in den Arbeitsordner
+ffmpeg
+ffmpeg.exe
+ffprobe
+ffprobe.exe
+version.json
