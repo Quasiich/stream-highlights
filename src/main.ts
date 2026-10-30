@@ -7,6 +7,9 @@ import { checkForUpdate, COMMIT, VERSION } from "./update.ts";
 /** Nach einem Update: so lange auf den Port warten, bis die alte Version ihn freigegeben hat */
 const UPDATE_PORT_WAIT_MS = 15_000;
 
+/** Tasten zum Beenden im Terminal; auf dem Mac kopiert ⌘C nur, beendet wird mit ⌃C */
+const STOP_KEYS = process.platform === "darwin" ? "control+C (⌃C, nicht ⌘C)" : "Strg+C";
+
 /**
  * Startpunkt der Web-Oberfläche, sowohl für `npm start` als auch für die
  * stream-highlights.exe. Die .exe arbeitet in ihrem eigenen Ordner: Dort
@@ -41,7 +44,7 @@ async function main() {
   console.log("Läuft.");
   console.log(`Oberfläche: ${url}`);
   console.log("Dieses Fenster offen lassen, solange du das Programm nutzt.");
-  console.log("Beenden: hier Strg+C drücken oder das Fenster schließen.");
+  console.log(`Beenden: hier ${STOP_KEYS} drücken oder das Fenster schließen.`);
   // Nach einem Update ist die Oberfläche schon offen (es kommt auch --no-open mit)
   const openBrowser = !process.argv.includes("--no-open") && !updated;
   if (openBrowser) openUrl(url);

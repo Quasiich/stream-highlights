@@ -118,8 +118,9 @@ Mit installiertem Node.js (26 oder neuer) und `npm install` im Projektordner:
 npm start
 ```
 
-startet dieselbe Oberfläche direkt aus dem Quellcode. Ohne Oberfläche geht es
-so:
+startet dieselbe Oberfläche direkt aus dem Quellcode. Beendet wird sie im
+Terminal mit **Strg+C**, auf dem Mac mit **control+C** (⌃C, nicht ⌘C). Ohne
+Oberfläche geht es so:
 
 ```
 npm run analyze -- https://www.twitch.tv/videos/2912392719
