@@ -1,6 +1,6 @@
 {
   "name": "stream-highlights",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Findet Highlights in Twitch-VODs anhand des Chats",
   "scripts": {
     "start": "tsx src/main.ts",
