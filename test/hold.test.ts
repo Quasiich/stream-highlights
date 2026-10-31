@@ -7,11 +7,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isHeld, retriesAutomatically, runAutomation } from "../src/automation.ts";
 import { defaultClipSettings } from "../src/clips.ts";
 import { defaultDiscordSettings } from "../src/discord.ts";
 import type { Report } from "../src/pipeline.ts";
-import { explainToolError, NetworkBlockedError } from "../src/tools.ts";
+import { explainToolError, NetworkBlockedError, tarCommand } from "../src/tools.ts";
 
 // Ausgabe von TwitchDownloaderCLI wie im Fehlerbericht (ffmpeg-Download ohne Internetzugriff)
 const DOTNET_NETWORK_FAILURE = `[STATUS] - Downloading FFmpeg
@@ -98,7 +99,8 @@ test("andere Fehler der Sprach-Auswertung warten ebenfalls, aber ohne automatisc
   assert.equal(retriesAutomatically(r), false);
 });
 
-const hasTar = spawnSync("tar", ["--version"]).status === 0;
+// Dasselbe tar wie das Programm (unter Windows das aus System32, ein GNU-tar im PATH kann keine C:-Pfade)
+const hasTar = spawnSync(tarCommand(), ["--version"]).status === 0;
 
 test("ffmpeg-Download prüft die Prüfsumme und übernimmt nur ffmpeg", { skip: !hasTar && "tar fehlt" }, async () => {
   const work = await mkdtemp(join(tmpdir(), "ffdl-"));
@@ -108,7 +110,7 @@ test("ffmpeg-Download prüft die Prüfsumme und übernimmt nur ffmpeg", { skip: 
   await writeFile(join(work, "src", "ffmpeg-7.1-essentials_build", "bin", exe), "FAKE-FFMPEG");
   await writeFile(join(work, "src", "ffmpeg-7.1-essentials_build", "README.txt"), "x");
   const archive = join(work, "ffmpeg.zip");
-  assert.equal(spawnSync("tar", ["-czf", archive, "-C", join(work, "src"), "."]).status, 0);
+  assert.equal(spawnSync(tarCommand(), ["-czf", archive, "-C", join(work, "src"), "."]).status, 0);
   const bytes = await readFile(archive);
   let sum = createHash("sha256").update(bytes).digest("hex");
 
@@ -120,7 +122,8 @@ test("ffmpeg-Download prüft die Prüfsumme und übernimmt nur ffmpeg", { skip: 
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   const port = (server.address() as any).port;
   const env = { ...process.env, FFMPEG_ZIP_URL: `http://127.0.0.1:${port}/ffmpeg-release-essentials.zip` };
-  const script = `import("${join(process.cwd(), "src/tools.ts").replace(/\\/g, "/")}").then((t) => t.downloadFfmpeg()).then(() => console.log("OK"), (e) => { console.log("FEHLER " + e.message); })`;
+  // Unter Windows braucht import() eine file://-Adresse statt "C:/…"
+  const script = `import("${pathToFileURL(join(process.cwd(), "src/tools.ts")).href}").then((t) => t.downloadFfmpeg()).then(() => console.log("OK"), (e) => { console.log("FEHLER " + e.message); })`;
   const run = (cwd: string) =>
     new Promise<string>((done) => {
       // Im leeren Testordner gibt es kein node_modules: tsx über den absoluten Pfad laden
