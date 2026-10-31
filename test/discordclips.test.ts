@@ -94,11 +94,11 @@ test("Automatik: lehnt Discord ab, wird für die nächste Grenze verkleinert und
   assert.deepEqual(fits, ["1@10", "2@10"], "50 MB wird übersprungen (Datei passt schon), danach gleich 10 MB");
   assert.equal(posts.length, 2);
   assert.match(posts[0], /^01_10mb\.mp4: \*\*#1\*\* \[1:40\]\(<https:\/\/www\.twitch\.tv\/videos\/2912392719\?t=0h01m40s>\)/, "Link ohne Twitch-Vorschau");
-  assert.match(posts[0], /für Discord verkleinert/);
+  assert.match(posts[0], /Qualität für Discord verringert/);
   assert.equal(notes.length, 1, "ein Hinweis pro Webhook, nicht pro Clip");
-  assert.match(notes[0], /^Clips: Discord hat die volle Qualität abgelehnt, .*nur 10 MB .*\(Server ohne Boost\)\. 2 Clips wurden deshalb verkleinert\. .*Upload-Grenze/);
+  assert.match(notes[0], /^Clips: Discord hat die volle Qualität abgelehnt, .*nur 10 MB .*\(Server ohne Boost\)\. Bei 2 Clips wurde deshalb die Qualität verringert\. .*Upload-Grenze/);
 });
 
 test("Hinweis bei fest eingestellter Grenze nennt, wo man sie ändert", () => {
-  assert.match(shrinkNote("Clips", 1, 50, false), /1 Clip wurde verkleinert, weil .*50 MB \(Boost-Stufe 2\).*„Automatisch“/);
+  assert.match(shrinkNote("Clips", 1, 50, false), /Bei 1 Clip wurde die Qualität verringert, weil .*50 MB \(Boost-Stufe 2\).*„Automatisch“/);
 });

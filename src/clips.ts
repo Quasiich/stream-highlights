@@ -77,11 +77,12 @@ export interface ClipRange {
   end: number;
 }
 
-/** Welche Abschnitte geschnitten werden, nach Rang sortiert */
-export function clipRanges(highlights: Highlight[], s: ClipSettings, videoLength?: number): ClipRange[] {
-  return [...highlights]
+/** Welche Abschnitte geschnitten werden, nach Rang sortiert: die besten s.count oder genau die Ränge in `ranks` */
+export function clipRanges(highlights: Highlight[], s: ClipSettings, videoLength?: number, ranks?: number[]): ClipRange[] {
+  const chosen = ranks ? highlights.filter((h) => ranks.includes(h.rank)) : highlights;
+  return [...chosen]
     .sort((a, b) => a.rank - b.rank)
-    .slice(0, s.count)
+    .slice(0, ranks ? undefined : s.count)
     .map((h) => {
       let start: number;
       let end: number;
@@ -135,10 +136,12 @@ export async function cutClips(
   outDir: string,
   onProgress: (p: Progress) => void = () => {},
   log: (line: string) => void = () => {},
+  /** Nur diese Highlights (Auswahl in der Oberfläche) statt der besten s.count */
+  ranks?: number[],
 ): Promise<ClipFile[]> {
   const id = report.video.id;
   if (!id) throw new Error("Zu diesem Stream gibt es kein VOD, aus dem geschnitten werden kann.");
-  const ranges = clipRanges(report.highlights, s, report.video.length);
+  const ranges = clipRanges(report.highlights, s, report.video.length, ranks);
   if (!ranges.length) return [];
 
   const tool = (message: string, percent?: number) => onProgress({ stage: "tools", message, percent });

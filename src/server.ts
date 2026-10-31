@@ -4,12 +4,12 @@ import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
-import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendClips, sendHighlights, webhookList } from "./automation.ts";
+import { loadAutomation, makeClips, normalizeAutomation, publish, runAutomation, wantsClips, webhookList } from "./automation.ts";
 import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
 import { estimateClipSeconds } from "./clips.ts";
 import { type LiveService, startLive } from "./livemode.ts";
 import { LiveProgress } from "./liveprogress.ts";
-import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, runAnalysis } from "./pipeline.ts";
+import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, type Report, runAnalysis, writeReport } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
 import { loadSettings, updateSettings } from "./settings.ts";
 import { findFfmpeg, findTwitchDownloader } from "./tools.ts";
@@ -190,7 +190,7 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     const s = normalizeAutomation(body);
     if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte mindestens einen Discord-Webhook für Highlights eintragen." });
     if (body.discord?.uploadClips && !s.discord.uploadClips) return send(res, 400, { error: "Für den Clip-Upload bitte mindestens einen Discord-Webhook für Clips eintragen." });
-    await updateSettings({ discord: { ...s.discord }, clips: { ...s.clips } });
+    await updateSettings({ discord: { ...s.discord }, clips: { ...s.clips }, publish: { mode: s.mode } });
     return send(res, 200, s);
   }
 
@@ -200,29 +200,36 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return send(res, 200, { ok: true });
   }
 
-  const discordMatch = path.match(/^\/api\/reports\/([\w-]+)\/discord$/);
-  if (req.method === "POST" && discordMatch) {
-    const report = await readReport(discordMatch[1]);
-    if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
-    const sent = await sendHighlights(report, (await loadAutomation()).discord);
-    return send(res, 200, { sent });
-  }
-
-  const discordClipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/discord\/clips$/);
-  if (req.method === "POST" && discordClipsMatch) {
+  // Ausgewählte Highlights posten: Zusammenfassung und/oder Clips, je nach Einstellungen
+  const publishMatch = path.match(/^\/api\/reports\/([\w-]+)\/publish$/);
+  if (req.method === "POST" && publishMatch) {
     if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse oder ein Clip-Schnitt." });
-    const reportId = discordClipsMatch[1];
+    const reportId = publishMatch[1];
     const report = await readReport(reportId);
     if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
-    const clips = (report.clips ?? []).filter((c) => existsSync(c.file));
-    const { discord } = await loadAutomation();
+    const ranks = selectedRanks((await readJson(req)).ranks, report);
+    if (!ranks.length) return send(res, 400, { error: "Bitte mindestens ein Highlight auswählen." });
+    const s = await loadAutomation();
+    const sel = { summary: s.discord.enabled ? ranks : undefined, clips: wantsClips(s) ? ranks : undefined };
+    if (!sel.summary && !sel.clips) {
+      return send(res, 400, { error: "In den Einstellungen ist noch nichts zum Posten eingeschaltet (Zusammenfassung, Clips schneiden oder hochladen)." });
+    }
     const id = startJob(reportId, async (progress) => {
-      const notes: string[] = [];
-      const sent = await sendClips(report, clips, discord, progress, (line) => notes.push(line));
-      const done = `${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} in Discord hochgeladen: ${sent.join(", ")}.`;
-      return { id: reportId, note: [done, ...notes].join("\n") };
+      const result = await publish(report, join(OUTPUT_DIR, reportId), sel, s, OUTPUT_DIR, progress);
+      if (!result.done.length && result.errors.length) throw new Error(result.errors.join("\n"));
+      return { id: reportId, note: result.done.join("\n"), error: result.errors.join("\n") };
     });
     return send(res, 202, { id });
+  }
+
+  // Auswahl verwerfen: nichts posten, Erinnerung weg
+  const dismissMatch = path.match(/^\/api\/reports\/([\w-]+)\/dismiss$/);
+  if (req.method === "POST" && dismissMatch) {
+    const report = await readReport(dismissMatch[1]);
+    if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
+    delete report.awaitingSelection;
+    await writeReport(join(OUTPUT_DIR, dismissMatch[1]), report);
+    return send(res, 200, { ok: true });
   }
 
   const clipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/clips$/);
@@ -231,9 +238,11 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     const reportId = clipsMatch[1];
     const report = await readReport(reportId);
     if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
+    const ranks = selectedRanks((await readJson(req)).ranks, report);
+    if (!ranks.length) return send(res, 400, { error: "Bitte mindestens ein Highlight auswählen." });
     const { clips } = await loadAutomation();
     const id = startJob(reportId, async (progress) => {
-      const done = await makeClips(report, join(OUTPUT_DIR, reportId), clips, OUTPUT_DIR, progress);
+      const done = await makeClips(report, join(OUTPUT_DIR, reportId), clips, OUTPUT_DIR, progress, () => {}, ranks);
       return { id: reportId, clips: done.length };
     });
     return send(res, 202, { id });
@@ -351,6 +360,12 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
  * Startet eine Analyse oder einen Clip-Schnitt im Hintergrund. Der Browser
  * verfolgt den Fortschritt über /api/jobs/<id> (progress, done, failed).
  */
+/** Ränge aus der Anfrage, nur solche, die es in der Analyse gibt */
+function selectedRanks(raw: unknown, report: Report): number[] {
+  const valid = new Set(report.highlights.map((h) => h.rank));
+  return Array.isArray(raw) ? [...new Set(raw.map(Number))].filter((r) => valid.has(r)) : [];
+}
+
 function startJob(input: string, run: (progress: (p: Progress) => void) => Promise<unknown>): string {
   const current: Job = { id: Date.now().toString(36), input, messages: [], listeners: new Set(), finished: false };
   job = current;

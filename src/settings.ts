@@ -12,6 +12,8 @@ export interface Settings {
   /** Discord und Clips nach der Auswertung, siehe automation.ts */
   discord?: Record<string, unknown>;
   clips?: Record<string, unknown>;
+  /** Ob nach der Live-Auswertung automatisch gepostet oder erst ausgewählt wird */
+  publish?: Record<string, unknown>;
 }
 
 export async function loadSettings(file = SETTINGS_FILE): Promise<Settings> {

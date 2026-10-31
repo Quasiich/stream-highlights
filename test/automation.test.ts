@@ -101,7 +101,13 @@ test("Discord-Post: beste Highlights mit Links, ohne Pings und Formatierung aus 
   );
   const embed: any = msg.embeds![0];
   assert.deepEqual(msg.allowed_mentions, { parse: [] });
-  assert.match(msg.content, /die besten 2 von 3/);
+  assert.match(msg.content, /die besten 2 Highlights$/);
+  assert.equal(highlightsMessage(report([highlight(1, 500, 455, 515)]), 5).content, "Neues Highlight von **scuse**");
+  assert.equal(
+    normalizeAutomation({ discord: { message: "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}" } }).discord.message,
+    DEFAULT_MESSAGE,
+    "alter Standardtext aus settings.json → neuer",
+  );
   const lines = embed.description.split("\n");
   assert.equal(lines.length, 2);
   assert.match(lines[0], /^\*\*#1\*\* \[7:35\]\(https:\/\/www\.twitch\.tv\/videos\/2912392719\?t=0h07m35s\)/);

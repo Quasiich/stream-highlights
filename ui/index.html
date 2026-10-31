@@ -188,7 +188,7 @@
   .player-caption { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 1.4em; }
   .list { display: grid; gap: 8px; }
   .row {
-    display: grid; grid-template-columns: 34px 1fr auto; gap: 4px 12px; align-items: center;
+    display: grid; grid-template-columns: 40px 1fr auto; gap: 4px 12px; align-items: center;
     border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; background: var(--panel);
   }
   .row:hover { border-color: var(--accent); }
@@ -205,6 +205,16 @@
   .row.keyword:not(.marker) { border-left: 4px solid var(--accent); }
   .said { grid-column: 2 / 4; font-size: 13px; font-style: italic; overflow-wrap: anywhere; }
   .badge.clip { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .badge.posted { background: var(--ok-soft, var(--panel-2)); color: var(--ok); font-weight: 600; }
+  .rank { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .rank input { margin: 0; width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
+  .row.picked { border-color: var(--accent); }
+  .pick-bar { position: sticky; top: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .pick-bar .pick-what { flex: 1 1 100%; font-size: 13px; color: var(--muted); }
+  .pick-bar .spacer { flex: 1; }
+  .await-box { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 10px 0; }
+  .await-box .btn { margin-top: 8px; }
+  .history .awaiting { color: var(--accent); font-weight: 600; }
   .note.ok { color: var(--ok); }
   .auto-summary { list-style: none; margin: 0 0 10px; padding: 0; font-size: 13px; display: grid; gap: 4px; }
   .auto-summary .dot { display: inline-block; margin-right: 6px; }
@@ -301,6 +311,7 @@
         Tonspur lädt das Programm dafür nach dem Stream aus dem VOD. Der PC muss während des Streams laufen.
         <span id="liveNeedsLogin" class="hidden"><br>Dafür zuerst mit Twitch verbinden.</span>
       </p>
+      <div id="awaitBox" class="await-box hidden" role="status"></div>
       <div id="liveLast" class="side-note hidden"></div>
       <div id="liveError" class="error-box hidden small" role="alert"></div>
       <details id="liveLogBox" class="hidden"><summary>Protokoll</summary><pre class="live-log" id="liveLog"></pre></details>
@@ -311,7 +322,7 @@
         <li><span class="dot" id="autoDiscordDot"></span><span id="autoDiscordText">Discord …</span></li>
         <li><span class="dot" id="autoClipsDot"></span><span id="autoClipsText">Clips …</span></li>
       </ul>
-      <p class="side-note">Läuft automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es die Knöpfe im Ergebnis.</p>
+      <p class="side-note" id="autoModeText"></p>
       <button class="btn small" id="autoOpen">Einstellungen</button>
     </div>
     <p class="side-note backup-note hidden" id="backupNote">
@@ -429,10 +440,16 @@
 <dialog id="autoDialog">
   <form id="autoForm">
     <h2>Einstellungen</h2>
-    <p class="small muted">Discord und Clips laufen automatisch nach jeder Live-Auswertung. Für andere Analysen gibt es im Ergebnis die Knöpfe „An Discord senden“ und „Clips schneiden“, die dieselben Einstellungen nutzen.</p>
+    <p class="small muted">Hier legst du fest, was in Discord landet und welche Clips geschnitten werden. Im Ergebnis jeder Analyse kannst du Highlights ankreuzen und mit „Auswahl posten“ genau diese posten.</p>
+    <fieldset class="thresholds">
+      <legend>Nach der Live-Auswertung</legend>
+      <label class="check small"><input type="radio" name="pubMode" value="auto"> Automatisch posten: Zusammenfassung und Clips der besten Highlights gehen gleich raus</label>
+      <label class="check small"><input type="radio" name="pubMode" value="manual"> Erst auswählen: Nichts geht raus, bis du im Ergebnis ankreuzt, was gepostet wird</label>
+      <p class="small muted" id="pubModeHint"></p>
+    </fieldset>
     <fieldset class="thresholds">
       <legend>Discord-Benachrichtigung</legend>
-      <label class="check small"><input type="checkbox" id="dcEnabled"> Highlights nach jedem Stream automatisch posten</label>
+      <label class="check small"><input type="checkbox" id="dcEnabled"> Highlight-Zusammenfassung posten (Zeiten mit Links zum VOD)</label>
 
       <h3 class="field-head">Webhooks</h3>
       <p class="small muted field-note">Pro Webhook wählst du, was in diesen Kanal geht: die Highlight-Zusammenfassung, die Clips oder beides. So können Highlights und Clips in verschiedenen Kanälen landen. In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → Webhook-URL kopieren.</p>
@@ -446,7 +463,7 @@
       <button class="link-btn small" type="button" id="dcResetMessage">Standardtext</button>
 
       <div class="options">
-        <label>Highlights im Post <input type="number" id="dcTop" min="1" max="25"></label>
+        <label>Highlights im Post (automatisch) <input type="number" id="dcTop" min="1" max="25"></label>
       </div>
 
       <h3 class="field-head">Clips in Discord</h3>
@@ -465,9 +482,9 @@
     </fieldset>
     <fieldset class="thresholds">
       <legend>Clips aus dem VOD</legend>
-      <label class="check small"><input type="checkbox" id="clEnabled"> Highlights automatisch als MP4 schneiden</label>
+      <label class="check small"><input type="checkbox" id="clEnabled"> Highlights als MP4 schneiden</label>
       <div class="options">
-        <label>Anzahl Clips <input type="number" id="clCount" min="1" max="25"></label>
+        <label>Anzahl Clips (automatisch) <input type="number" id="clCount" min="1" max="25"></label>
         <label>Länge
           <select id="clMode">
             <option value="highlight">wie das erkannte Highlight</option>
@@ -830,11 +847,12 @@ function follow(jobId) {
   source.addEventListener("done", async (e) => {
     source.close();
     setBusy(false);
-    const { id, note } = JSON.parse(e.data);
+    const { id, note, error } = JSON.parse(e.data);
     markAnalyzed(id);
     await loadHistory();
     await showReport(id);
-    if (note) resultNote(note);
+    if (error) resultNote([note, error].filter(Boolean).join("\n"), true);
+    else if (note) resultNote(note);
     scheduleEstimate();
   });
   source.addEventListener("failed", (e) => {
@@ -861,12 +879,27 @@ async function loadHistory() {
       (r) => `<li><button data-id="${esc(r.id)}" class="${r.id === currentId ? "active" : ""}">
         <span class="title">${esc(r.channel || "VOD " + r.id)}</span>
         <span class="small muted title">${esc(r.title || r.id)}</span>
-        <span class="small muted">${r.highlightCount} Highlights${r.analyzedAt ? " · " + new Date(r.analyzedAt).toLocaleDateString("de-DE") : ""}</span>
+        <span class="small muted">${r.highlightCount} Highlights${r.analyzedAt ? " · " + new Date(r.analyzedAt).toLocaleDateString("de-DE") : ""}${r.awaitingSelection ? ' · <span class="awaiting">wartet auf Auswahl</span>' : ""}</span>
       </button></li>`,
     )
     .join("");
   for (const b of ul.querySelectorAll("button")) b.addEventListener("click", () => showReport(b.dataset.id));
+  renderAwaiting(reports);
   return reports;
+}
+
+/** Erinnerung an Live-Auswertungen, aus denen noch nichts ausgewählt wurde: links und im Fenstertitel */
+function renderAwaiting(reports) {
+  const waiting = reports.filter((r) => r.awaitingSelection);
+  document.title = waiting.length ? "(" + waiting.length + ") Auswahl offen · stream-highlights" : "stream-highlights";
+  const box = $("awaitBox");
+  box.classList.toggle("hidden", !waiting.length);
+  if (!waiting.length) return;
+  const r = waiting[0];
+  box.innerHTML = `🔔 Stream ausgewertet: <strong>${esc(r.title || r.id)}</strong>. ${r.highlightCount} Highlights warten auf deine Auswahl, bevor etwas in Discord landet.` +
+    (waiting.length > 1 ? ` (Dazu ${waiting.length - 1} weitere.)` : "") +
+    `<br><button class="btn small primary" type="button" id="awaitOpen">Jetzt auswählen</button>`;
+  $("awaitOpen").addEventListener("click", () => showReport(r.id));
 }
 
 // ---- Reiter ---------------------------------------------------------------
@@ -991,6 +1024,12 @@ async function showReport(id) {
   const voiceCount = r.highlights.filter((h) => h.sources.includes("keyword")).length;
   const clips = r.clips || [];
   const clipRanks = new Set(clips.map((c) => c.rank));
+  if (!automation) await refreshAutomation().catch(() => {});
+  const posted = r.posted || {};
+  const summaryPosted = new Set(posted.summary?.ranks || []);
+  const clipsPosted = new Set(posted.clips?.ranks || []);
+  // Vorauswahl: die besten n, solange noch nichts gepostet wurde
+  const preselect = posted.summary || posted.clips ? 0 : automation?.discord.enabled ? automation.discord.top : automation?.clips.count ?? 5;
 
   const BADGES = {
     marker: () => '<span class="badge marker">★ Marker</span>',
@@ -1000,7 +1039,10 @@ async function showReport(id) {
   };
   const rows = r.highlights
     .map((h, i) => {
-      const badges = h.sources.map((s) => BADGES[s](h)).join(" ") + (clipRanks.has(h.rank) ? ' <span class="badge clip">Clip</span>' : "");
+      const badges = h.sources.map((s) => BADGES[s](h)).join(" ") +
+        (clipRanks.has(h.rank) ? ' <span class="badge clip">Clip</span>' : "") +
+        (summaryPosted.has(h.rank) ? ' <span class="badge posted" title="Steht in einer Zusammenfassung in Discord">✓ Gepostet</span>' : "") +
+        (clipsPosted.has(h.rank) ? ' <span class="badge posted" title="Clip wurde in Discord hochgeladen">✓ Clip in Discord</span>' : "");
       const words = [
         h.markers.length ? "Marker: " + h.markers.join(" / ") : "",
         h.keywords.length ? "Gesagt: " + h.keywords.map((k) => "„" + k + "“").join(", ") : "",
@@ -1008,7 +1050,7 @@ async function showReport(id) {
       ].filter(Boolean).join(" · ");
       const classes = ["row", h.sources.includes("marker") ? "marker" : "", h.sources.includes("keyword") ? "keyword" : ""].filter(Boolean).join(" ");
       return `<div class="${classes}" tabindex="0" data-i="${i}">
-        <div class="rank">${h.rank}</div>
+        <div class="rank"><input type="checkbox" class="pick" data-rank="${h.rank}" aria-label="Highlight ${h.rank} auswählen"${h.rank <= preselect ? " checked" : ""}><span>${h.rank}</span></div>
         <div><span class="time">${clock(h.start)} – ${clock(h.end)}</span> ${badges}</div>
         <div class="meta"><span class="score">${h.score}×</span><span>${h.chatters} Chatter</span><span>${clock(h.end - h.start)}</span></div>
         <div class="words">${esc(words) || "&nbsp;"}</div>
@@ -1043,17 +1085,24 @@ async function showReport(id) {
       <div class="result-actions">
         <a class="btn small" href="https://www.twitch.tv/videos/${esc(v.id)}" target="_blank" rel="noopener">Auf Twitch öffnen</a>
         <button class="btn small" id="openFolder">Ordner öffnen</button>
-        <button class="btn small" id="sendDiscord">An Discord senden</button>
-        <button class="btn small" id="cutClips">${clips.length ? "Clips ergänzen" : "Clips schneiden"}</button>
         ${clips.length ? '<button class="btn small" id="openClips">Clip-Ordner öffnen</button>' : ""}
-        ${clips.length ? '<button class="btn small" id="sendClips">Clips an Discord</button>' : ""}
       </div>
     </div>
     ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
     ${voiceLine ? `<div class="note">${voiceLine}</div>` : ""}
     ${r.voiceNote ? `<div class="error-box">${esc(r.voiceNote)}</div>` : ""}
     ${clips.length ? `<div class="note">${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} geschnitten: ${esc(clips[0].file.replace(/[\\/][^\\/]*$/, ""))}</div>` : ""}
+    ${r.awaitingSelection ? '<div class="await-box">Diese Live-Auswertung wartet auf deine Auswahl. Sieh dir die Highlights rechts in der Vorschau an, kreuze an, was in Discord soll, und klick „Auswahl posten“.</div>' : ""}
     <div id="resultNote" class="note hidden" role="status"></div>
+    ${r.highlights.length ? `<div class="pick-bar">
+      <button class="btn primary small" id="publishBtn">Auswahl posten</button>
+      <button class="btn small" id="cutClips">Nur schneiden</button>
+      ${r.awaitingSelection ? '<button class="btn small" id="dismissBtn">Nichts posten</button>' : ""}
+      <span class="spacer"></span>
+      <button class="link-btn small" type="button" id="pickTop">Top ${preselect || automation?.discord.top || 5}</button>
+      <button class="link-btn small" type="button" id="pickNone">Keine</button>
+      <div class="pick-what" id="pickWhat"></div>
+    </div>` : ""}
     <div class="result-grid">
       <div class="list" id="hlList">${rows || '<div class="empty">Keine deutlichen Peaks gefunden.</div>'}</div>
       <div class="player">
@@ -1076,42 +1125,88 @@ async function showReport(id) {
   const base = "/api/reports/" + encodeURIComponent(id);
   $("openFolder").addEventListener("click", () => api(base + "/open", { method: "POST" }));
   if (clips.length) $("openClips").addEventListener("click", () => api(base + "/clips/open", { method: "POST" }).catch((err) => resultNote(err.message, true)));
-  $("sendDiscord").addEventListener("click", async () => {
-    $("sendDiscord").disabled = true;
-    try {
-      const res = await api(base + "/discord", { method: "POST" });
-      resultNote("Highlights in Discord gepostet: " + res.sent.join(", ") + ".");
-    } catch (err) {
-      resultNote(err.message, true);
-    } finally {
-      $("sendDiscord").disabled = false;
-    }
-  });
-  if (clips.length) $("sendClips").addEventListener("click", async () => {
-    $("analyzeError").classList.add("hidden");
-    try {
-      const job = await api(base + "/discord/clips", { method: "POST" });
-      follow(job.id);
-      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    } catch (err) {
-      resultNote(err.message, true);
-    }
-  });
-  $("cutClips").addEventListener("click", async () => {
-    $("analyzeError").classList.add("hidden");
-    try {
-      const job = await api(base + "/clips", { method: "POST" });
-      follow(job.id);
-      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    } catch (err) {
-      resultNote(err.message, true);
-    }
-  });
+  if (r.highlights.length) wirePicks(r, base, preselect || automation?.discord.top || 5);
   for (const row of $("hlList").querySelectorAll(".row")) {
     const play = () => playHighlight(v.id, r.highlights[Number(row.dataset.i)], row);
     row.addEventListener("click", play);
     row.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), play()));
   }
+}
+
+/** Checkboxen im Ergebnis: Auswahl zählen, posten, schneiden */
+function wirePicks(r, base, top) {
+  const boxes = [...$("hlList").querySelectorAll(".pick")];
+  const picked = () => boxes.filter((b) => b.checked).map((b) => Number(b.dataset.rank));
+  const update = () => {
+    const n = picked().length;
+    for (const b of boxes) b.closest(".row").classList.toggle("picked", b.checked);
+    $("publishBtn").textContent = "Auswahl posten (" + n + ")";
+    $("cutClips").textContent = "Nur schneiden (" + n + ")";
+    const what = publishWhat();
+    $("publishBtn").disabled = !n || !what;
+    $("cutClips").disabled = !n;
+    $("pickWhat").textContent = what
+      ? "„Auswahl posten“: " + what + "."
+      : "In den Einstellungen ist noch nichts zum Posten eingeschaltet (Zusammenfassung, Clips schneiden oder hochladen).";
+  };
+  for (const b of boxes) {
+    // Ankreuzen soll nicht gleich die Vorschau starten
+    b.addEventListener("click", (e) => e.stopPropagation());
+    b.addEventListener("keydown", (e) => e.stopPropagation());
+    b.addEventListener("change", update);
+  }
+  $("pickTop").addEventListener("click", () => {
+    for (const b of boxes) b.checked = Number(b.dataset.rank) <= top;
+    update();
+  });
+  $("pickNone").addEventListener("click", () => {
+    for (const b of boxes) b.checked = false;
+    update();
+  });
+  const startJobFor = async (path, body) => {
+    $("analyzeError").classList.add("hidden");
+    try {
+      const job = await api(base + path, { method: "POST", body });
+      follow(job.id);
+      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      resultNote(err.message, true);
+    }
+  };
+  $("publishBtn").addEventListener("click", () => {
+    const ranks = picked();
+    const d = automation.discord;
+    const posted = r.posted || {};
+    const again = ranks.filter((rank) =>
+      (d.enabled && posted.summary?.ranks.includes(rank)) || (d.uploadClips && posted.clips?.ranks.includes(rank)));
+    if (again.length && !confirm("Schon in Discord: " + again.map((x) => "#" + x).join(", ") + ". Trotzdem noch einmal posten?")) return;
+    startJobFor("/publish", { ranks });
+  });
+  $("cutClips").addEventListener("click", () => startJobFor("/clips", { ranks: picked() }));
+  if (r.awaitingSelection) {
+    $("dismissBtn").addEventListener("click", async () => {
+      await api(base + "/dismiss", { method: "POST" }).catch((err) => resultNote(err.message, true));
+      await loadHistory();
+      await showReport(currentId);
+      resultNote("Erledigt, aus dieser Auswertung wird nichts gepostet.");
+    });
+  }
+  update();
+}
+
+/** Was „Auswahl posten“ mit den aktuellen Einstellungen macht, leer = nichts */
+function publishWhat() {
+  if (!automation) return "";
+  const d = automation.discord, c = automation.clips;
+  const hooks = (kind) => {
+    const n = forKind(d.webhooks, kind).length;
+    return n === 1 ? "1 Webhook" : n + " Webhooks";
+  };
+  const parts = [];
+  if (d.enabled) parts.push("Zusammenfassung an " + hooks("highlights"));
+  if (d.uploadClips) parts.push("Clips schneiden und an " + hooks("clips") + " hochladen");
+  else if (c.enabled) parts.push("Clips schneiden" + (d.enabled ? " (in Discord nur der Ordner-Hinweis)" : ""));
+  return parts.join(", ");
 }
 
 function resultNote(message, isError = false) {
@@ -1153,8 +1248,11 @@ async function refreshAutomation() {
   $("autoDiscordText").textContent = d.enabled
     ? "Discord: die besten " + d.top + " an " + plural(forKind(d.webhooks, "highlights").length) + (d.uploadClips ? ", Clips an " + plural(forKind(d.webhooks, "clips").length) : "")
     : d.uploadClips ? "Discord: Clips an " + plural(forKind(d.webhooks, "clips").length) : "Discord: aus";
-  $("autoClipsDot").classList.toggle("on", c.enabled);
-  $("autoClipsText").textContent = c.enabled
+  $("autoModeText").textContent = automation.mode === "manual"
+    ? "Nach der Live-Auswertung wartet alles auf deine Auswahl im Ergebnis."
+    : "Läuft automatisch nach jeder Live-Auswertung. Im Ergebnis kannst du zusätzlich selbst auswählen und posten.";
+  $("autoClipsDot").classList.toggle("on", c.enabled || d.uploadClips);
+  $("autoClipsText").textContent = c.enabled || d.uploadClips
     ? "Clips: " + c.count + " Stück, " + (c.mode === "fixed" ? c.lengthSeconds + " s" : "Highlight-Länge, max. " + c.maxLengthSeconds + " s")
     : "Clips: aus";
 }
@@ -1168,14 +1266,22 @@ function showClipMode() {
 }
 $("clMode").addEventListener("change", showClipMode);
 
+function showModeHint() {
+  const manual = document.querySelector('[name="pubMode"]:checked')?.value === "manual";
+  $("pubModeHint").textContent = manual
+    ? "Nach dem Stream sind die besten Highlights im Ergebnis vorausgewählt. Du siehst sie dir in der Vorschau an, änderst die Auswahl und klickst „Auswahl posten“. Bis dahin erinnert dich das Programm links und im Fenstertitel."
+    : "Gepostet werden die besten „Highlights im Post“ als Zusammenfassung und die besten „Anzahl Clips“ als Clips.";
+}
+for (const radio of document.querySelectorAll('[name="pubMode"]')) radio.addEventListener("change", showModeHint);
+
 function showUploadOptions() {
   const on = $("dcUploadClips").checked;
   $("dcUploadOptions").classList.toggle("hidden", !on);
   $("dcUploadHint").classList.toggle("hidden", !on);
   const limit = Number($("dcUploadLimit").value);
   $("dcUploadHint").textContent = (limit
-    ? "Clips über " + limit + " MB werden vorher verkleinert (niedrigere Auflösung/Bitrate). Ist der Server schwächer geboostet als gewählt, lehnt Discord den Upload ab."
-    : "Discord verrät über den Webhook nicht, wie der Server geboostet ist. Deshalb geht jeder Clip erst in voller Qualität raus. Ist er zu groß, wird er für 50 MB (Boost-Stufe 2) bzw. 10 MB (ohne Boost) verkleinert und noch einmal geschickt.") +
+    ? "Bei Clips über " + limit + " MB wird vorher die Qualität verringert (niedrigere Auflösung/Bitrate). Ist der Server schwächer geboostet als gewählt, lehnt Discord den Upload ab."
+    : "Discord verrät über den Webhook nicht, wie der Server geboostet ist. Deshalb geht jeder Clip erst in voller Qualität raus. Ist er zu groß, wird seine Qualität für 50 MB (Boost-Stufe 2) bzw. 10 MB (ohne Boost) verringert und er noch einmal geschickt.") +
     " Ein Clip pro Nachricht. Als Richtwert: 60 s in 1080p sind etwa 40–70 MB.";
 }
 $("dcUploadClips").addEventListener("change", showUploadOptions);
@@ -1257,6 +1363,8 @@ function readHooks() {
 async function openSettings() {
   await refreshAutomation();
   const d = automation.discord, c = automation.clips;
+  for (const radio of document.querySelectorAll('[name="pubMode"]')) radio.checked = radio.value === automation.mode;
+  showModeHint();
   $("dcEnabled").checked = d.enabled;
   $("dcHooks").innerHTML = "";
   for (const hook of d.webhooks) addHookRow(hook);
@@ -1289,6 +1397,7 @@ $("autoForm").addEventListener("submit", async (e) => {
     await api("/api/automation", {
       method: "POST",
       body: {
+        publish: { mode: document.querySelector('[name="pubMode"]:checked')?.value || "auto" },
         discord: {
           enabled: $("dcEnabled").checked,
           webhooks: readHooks(),

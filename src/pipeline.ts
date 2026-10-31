@@ -54,6 +54,15 @@ export interface Report {
   voiceNote?: string;
   /** Aus dem VOD geschnittene Clips, siehe clips.ts */
   clips?: ClipFile[];
+  /** Live-Auswertung im Modus „manuell“: Der Streamer hat noch nicht ausgewählt, was gepostet wird */
+  awaitingSelection?: boolean;
+  /** Was schon in Discord gepostet wurde (Ränge), damit nichts aus Versehen doppelt rausgeht */
+  posted?: { summary?: PostedRanks; clips?: PostedRanks };
+}
+
+export interface PostedRanks {
+  at: string;
+  ranks: number[];
 }
 
 export interface ClipFile {
@@ -205,7 +214,9 @@ async function loadMarkers(videoId: string, onProgress: (p: Progress) => void): 
 }
 
 /** Alle bisherigen Analysen im Ausgabeordner, neueste zuerst. */
-export async function listReports(outDir = OUTPUT_DIR): Promise<(Report["video"] & { analyzedAt?: string; highlightCount: number })[]> {
+export async function listReports(
+  outDir = OUTPUT_DIR,
+): Promise<(Report["video"] & { analyzedAt?: string; highlightCount: number; awaitingSelection: boolean })[]> {
   if (!existsSync(outDir)) return [];
   const list = [];
   for (const entry of await readdir(outDir, { withFileTypes: true })) {
@@ -213,7 +224,7 @@ export async function listReports(outDir = OUTPUT_DIR): Promise<(Report["video"]
     if (!entry.isDirectory() || !existsSync(file)) continue;
     try {
       const report: Report = JSON.parse(await readFile(file, "utf8"));
-      list.push({ ...report.video, id: report.video.id ?? entry.name, analyzedAt: report.analyzedAt, highlightCount: report.highlights.length });
+      list.push({ ...report.video, id: report.video.id ?? entry.name, analyzedAt: report.analyzedAt, highlightCount: report.highlights.length, awaitingSelection: Boolean(report.awaitingSelection) });
     } catch {
       // Kaputte oder alte Datei überspringen
     }

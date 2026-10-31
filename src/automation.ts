@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { CLIP_QUALITIES, type ClipSettings, clipFolder, cutClips, defaultClipSettings, fitClip } from "./clips.ts";
@@ -6,6 +7,7 @@ import {
   clipUploadMessage,
   DEFAULT_MESSAGE,
   defaultDiscordSettings,
+  OLD_DEFAULT_MESSAGE,
   type DiscordSettings,
   type DiscordWebhook,
   highlightsMessage,
@@ -18,12 +20,19 @@ import {
   webhookLabel,
   webhooksFor,
 } from "./discord.ts";
-import { type ClipFile, OUTPUT_DIR, type Progress, type Report, writeReport } from "./pipeline.ts";
+import { type ClipFile, OUTPUT_DIR, type PostedRanks, type Progress, type Report, writeReport } from "./pipeline.ts";
 import { loadSettings, SETTINGS_FILE, type Settings } from "./settings.ts";
 import { ensureFfmpeg, ensureTwitchDownloader } from "./tools.ts";
 
+/**
+ * "auto": nach der Live-Auswertung gleich posten (die besten n).
+ * "manual": erst, wenn der Streamer im Ergebnis ausgewählt hat.
+ */
+export type PublishMode = "auto" | "manual";
+
 /** Was nach einer Auswertung passiert: Discord-Post und Clips */
 export interface AutomationSettings {
+  mode: PublishMode;
   discord: DiscordSettings;
   clips: ClipSettings;
 }
@@ -50,15 +59,17 @@ export function webhookList(d: any): DiscordWebhook[] {
 }
 
 /** Prüft und vervollständigt Einstellungen aus settings.json bzw. der Oberfläche */
-export function normalizeAutomation(raw: Pick<Settings, "discord" | "clips"> = {}): AutomationSettings {
+export function normalizeAutomation(raw: Pick<Settings, "discord" | "clips" | "publish"> = {}): AutomationSettings {
   const d: any = raw.discord ?? {};
   const c: any = raw.clips ?? {};
   const webhooks = webhookList(d)
     .filter((w) => isWebhookUrl(w.url))
     .slice(0, MAX_WEBHOOKS);
-  const message = typeof d.message === "string" && d.message.trim() ? d.message.trim().slice(0, MAX_MESSAGE) : DEFAULT_MESSAGE;
+  const custom = typeof d.message === "string" && d.message.trim() && d.message.trim() !== OLD_DEFAULT_MESSAGE;
+  const message = custom ? d.message.trim().slice(0, MAX_MESSAGE) : DEFAULT_MESSAGE;
   const lengthSeconds = range(c.lengthSeconds, defaultClipSettings.lengthSeconds, 5, 600);
   return {
+    mode: raw.publish?.mode === "manual" ? "manual" : "auto",
     discord: {
       enabled: Boolean(d.enabled) && webhooksFor(webhooks, "highlights").length > 0,
       webhooks,
@@ -90,10 +101,10 @@ export async function loadAutomation(file = SETTINGS_FILE): Promise<AutomationSe
  * ist (für den Knopf in der Oberfläche). Gibt zurück, wohin gepostet wurde,
  * und wirft, wenn es bei mindestens einem Webhook nicht geklappt hat.
  */
-export async function sendHighlights(report: Report, s: DiscordSettings): Promise<string[]> {
+export async function sendHighlights(report: Report, s: DiscordSettings, ranks?: number[]): Promise<string[]> {
   const webhooks = webhooksFor(s.webhooks, "highlights");
   if (!webhooks.length) throw new Error("Bitte zuerst in den Einstellungen einen Discord-Webhook für Highlights eintragen.");
-  return sendToAll(webhooks, highlightsMessage(report, s.top, s.message));
+  return sendToAll(webhooks, highlightsMessage(report, s.top, s.message, ranks));
 }
 
 async function sendToAll(webhooks: DiscordWebhook[], payload: Parameters<typeof postToAll>[1]): Promise<string[]> {
@@ -111,13 +122,13 @@ async function sendToAll(webhooks: DiscordWebhook[], payload: Parameters<typeof 
 
 const BOOST_HINT: Record<number, string> = { 10: "Server ohne Boost", 50: "Boost-Stufe 2", 100: "Boost-Stufe 3" };
 
-/** Erklärt, warum Clips verkleinert wurden und wo man die Grenze selbst einstellt */
+/** Erklärt, warum die Qualität verringert wurde und wo man die Grenze selbst einstellt */
 export function shrinkNote(name: string, count: number, limitMb: number, auto: boolean): string {
-  const clips = count === 1 ? "1 Clip wurde" : `${count} Clips wurden`;
+  const clips = count === 1 ? "Bei 1 Clip wurde" : `Bei ${count} Clips wurde`;
   return auto
     ? `${name}: Discord hat die volle Qualität abgelehnt, der Server erlaubt offenbar nur ${limitMb} MB pro Datei (${BOOST_HINT[limitMb]}). ` +
-        `${clips} deshalb verkleinert. Fest einstellen lässt sich das unter Einstellungen → Clips in Discord → Upload-Grenze.`
-    : `${name}: ${clips} verkleinert, weil in den Einstellungen eine Upload-Grenze von ${limitMb} MB (${BOOST_HINT[limitMb]}) gewählt ist. ` +
+        `${clips} deshalb die Qualität verringert. Fest einstellen lässt sich das unter Einstellungen → Clips in Discord → Upload-Grenze.`
+    : `${name}: ${clips} die Qualität verringert, weil in den Einstellungen eine Upload-Grenze von ${limitMb} MB (${BOOST_HINT[limitMb]}) gewählt ist. ` +
         `Ist der Server stärker geboostet, dort unter Clips in Discord → Upload-Grenze eine höhere Grenze oder „Automatisch“ wählen.`;
 }
 
@@ -218,7 +229,10 @@ export async function sendClips(
   return sent;
 }
 
-/** Schneidet die Clips und merkt sie sich in highlights.json */
+/**
+ * Schneidet die Clips (die besten s.count oder genau `ranks`) und merkt sie
+ * sich in highlights.json. Früher geschnittene anderer Ränge bleiben dort stehen.
+ */
 export async function makeClips(
   report: Report,
   dir: string,
@@ -226,15 +240,100 @@ export async function makeClips(
   outDir = OUTPUT_DIR,
   onProgress: (p: Progress) => void = () => {},
   log: (line: string) => void = () => {},
+  ranks?: number[],
 ): Promise<ClipFile[]> {
-  const clips = await cutClips(report, s, outDir, onProgress, log);
-  report.clips = clips;
+  const clips = await cutClips(report, s, outDir, onProgress, log, ranks);
+  const kept = (report.clips ?? []).filter((c) => !clips.some((n) => n.rank === c.rank) && existsSync(c.file));
+  report.clips = [...kept, ...clips].sort((a, b) => a.rank - b.rank);
   await writeReport(dir, report);
   return clips;
 }
 
+/** Soll überhaupt geschnitten werden? Der Upload braucht die Clips ja auch. */
+export const wantsClips = (s: AutomationSettings) => s.clips.enabled || s.discord.uploadClips;
+
+/** Welche Highlights wohin: undefined = diesen Teil auslassen */
+export interface Selection {
+  summary?: number[];
+  clips?: number[];
+}
+
+/** Was beim Posten geklappt hat und was nicht, für Oberfläche und Protokoll */
+export interface PublishResult {
+  done: string[];
+  errors: string[];
+}
+
+function markPosted(previous: PostedRanks | undefined, ranks: number[]): PostedRanks {
+  return { at: new Date().toISOString(), ranks: [...new Set([...(previous?.ranks ?? []), ...ranks])].sort((a, b) => a - b) };
+}
+
 /**
- * Läuft nach jeder automatischen (Live-)Auswertung. Fehler werden nur
+ * Postet die Zusammenfassung und schneidet/lädt die Clips, jeweils für die
+ * gewählten Highlights. Ein Fehler in einem Teil hält den anderen nicht auf.
+ * Merkt sich in highlights.json, was gepostet wurde.
+ */
+export async function publish(
+  report: Report,
+  dir: string,
+  sel: Selection,
+  s: AutomationSettings,
+  outDir = OUTPUT_DIR,
+  onProgress: (p: Progress) => void = () => {},
+  log: (line: string) => void = () => {},
+  deps: { sendClips?: typeof sendClips } = {},
+): Promise<PublishResult> {
+  const result: PublishResult = { done: [], errors: [] };
+  const done = (line: string) => (result.done.push(line), log(line));
+  const fail = (line: string) => (result.errors.push(line), log(line));
+
+  if (sel.summary) {
+    try {
+      const sent = await sendHighlights(report, s.discord, sel.summary);
+      done(`Zusammenfassung mit ${sel.summary.length} ${sel.summary.length === 1 ? "Highlight" : "Highlights"} in Discord gepostet (${sent.join(", ")}).`);
+      report.posted = { ...report.posted, summary: markPosted(report.posted?.summary, sel.summary) };
+    } catch (err: any) {
+      fail(`Discord: ${err.message}`);
+    }
+  }
+
+  if (sel.clips?.length && !report.video.id) fail("Clips: Kein VOD zu diesem Stream, nichts zu schneiden.");
+  else if (sel.clips?.length) {
+    try {
+      log(`Schneide ${sel.clips.length} Clips aus dem VOD …`);
+      const clips = await makeClips(report, dir, s.clips, outDir, onProgress, (line) => log(`Clips: ${line}`), sel.clips);
+      const folder = clipFolder(report, s.clips, outDir);
+      done(`${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} gespeichert in ${folder}`);
+      if (s.discord.uploadClips && clips.length) {
+        const notes: string[] = [];
+        try {
+          const sent = await (deps.sendClips ?? sendClips)(report, clips, s.discord, onProgress, (line) => notes.push(line));
+          done(`Clips in Discord hochgeladen (${sent.join(", ")}).`);
+          notes.forEach(done);
+          report.posted = { ...report.posted, clips: markPosted(report.posted?.clips, clips.map((c) => c.rank)) };
+        } catch (err: any) {
+          fail(`Discord: ${err.message}`);
+        }
+      } else if (s.discord.enabled && clips.length) {
+        // Ohne Upload nur der Hinweis, wo die Clips liegen
+        await sendToAll(webhooksFor(s.discord.webhooks, "clips"), clipsMessage(report, clips, folder)).catch((err) => fail(`Discord: ${err.message}`));
+      }
+    } catch (err: any) {
+      fail(`Clips: ${err.message}`);
+    }
+  }
+
+  delete report.awaitingSelection;
+  await writeReport(dir, report);
+  return result;
+}
+
+/** Die besten n Ränge */
+const topRanks = (report: Report, n: number) => [...report.highlights].sort((a, b) => a.rank - b.rank).slice(0, n).map((h) => h.rank);
+
+/**
+ * Läuft nach jeder automatischen (Live-)Auswertung. Im Modus „manuell“ wird
+ * nur vermerkt, dass die Auswahl noch aussteht. Fehler werden nur
  * protokolliert: Die Analyse selbst ist da ja schon fertig.
  */
 export async function runAutomation(
@@ -245,33 +344,24 @@ export async function runAutomation(
   /** Fortschritt des Clip-Schnitts, für die Oberfläche */
   onProgress: (p: Progress) => void = () => {},
 ): Promise<void> {
-  if (s.discord.enabled) {
-    try {
-      const sent = await sendHighlights(report, s.discord);
-      log(`Highlights in Discord gepostet (${sent.join(", ")}).`);
-    } catch (err: any) {
-      log(`Discord: ${err.message}`);
-    }
-  }
-  if (!s.clips.enabled) return;
-  if (!report.video.id) {
-    log("Clips: Kein VOD zu diesem Stream, nichts zu schneiden.");
+  if (!s.discord.enabled && !wantsClips(s)) return;
+  if (s.mode === "manual") {
+    if (!report.highlights.length) return;
+    report.awaitingSelection = true;
+    await writeReport(dir, report);
+    log(`${report.highlights.length} Highlights warten auf deine Auswahl: im Ergebnis ankreuzen und „Auswahl posten“.`);
     return;
   }
-  try {
-    log(`Schneide ${Math.min(s.clips.count, report.highlights.length)} Clips aus dem VOD …`);
-    const clips = await makeClips(report, dir, s.clips, outDir, onProgress, (line) => log(`Clips: ${line}`));
-    const folder = clipFolder(report, s.clips, outDir);
-    log(`${clips.length} Clips gespeichert in ${folder}`);
-    if (s.discord.uploadClips && clips.length) {
-      await sendClips(report, clips, s.discord, onProgress, (line) => log(`Discord: ${line}`))
-        .then((sent) => log(`Clips in Discord hochgeladen (${sent.join(", ")}).`))
-        .catch((err) => log(`Discord: ${err.message}`));
-    } else if (s.discord.enabled && clips.length) {
-      // Ohne Upload nur der Hinweis, wo die Clips liegen
-      await sendToAll(webhooksFor(s.discord.webhooks, "clips"), clipsMessage(report, clips, folder)).catch((err) => log(`Discord: ${err.message}`));
-    }
-  } catch (err: any) {
-    log(`Clips: ${err.message}`);
-  }
+  await publish(
+    report,
+    dir,
+    {
+      summary: s.discord.enabled ? topRanks(report, s.discord.top) : undefined,
+      clips: wantsClips(s) ? topRanks(report, s.clips.count) : undefined,
+    },
+    s,
+    outDir,
+    onProgress,
+    log,
+  );
 }

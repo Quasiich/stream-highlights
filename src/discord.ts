@@ -43,7 +43,11 @@ export function webhooksFor(webhooks: DiscordWebhook[], kind: "highlights" | "cl
   return webhooks.filter((w) => (w.purpose ?? "all") === "all" || w.purpose === kind);
 }
 
-export const DEFAULT_MESSAGE = "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}";
+export const DEFAULT_MESSAGE = "Neue Highlights von **{kanal}**: die besten {anzahl} Highlights";
+/** Standardtext bis 1.3.x; steht er unverändert in settings.json, gilt der neue */
+/** Standardtext, wenn nur ein Highlight im Post steht („die besten 1 Highlights“ wäre schief) */
+const DEFAULT_MESSAGE_ONE = "Neues Highlight von **{kanal}**";
+export const OLD_DEFAULT_MESSAGE = "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}";
 
 /** Platzhalter für den eigenen Text, mit Beschreibung für die Oberfläche */
 export const MESSAGE_PLACEHOLDERS: Record<string, string> = {
@@ -128,10 +132,11 @@ function messageVars(report: Report, count: number): Record<string, string> {
   };
 }
 
-/** Post mit den besten Highlights einer Analyse */
-export function highlightsMessage(report: Report, top: number, template = DEFAULT_MESSAGE): DiscordPayload {
+/** Post mit den besten Highlights einer Analyse, oder genau den ausgewählten (`ranks`) */
+export function highlightsMessage(report: Report, top: number, template = DEFAULT_MESSAGE, ranks?: number[]): DiscordPayload {
   const v = report.video;
-  const list = [...report.highlights].sort((a, b) => a.rank - b.rank).slice(0, top);
+  const chosen = ranks ? report.highlights.filter((h) => ranks.includes(h.rank)) : report.highlights;
+  const list = [...chosen].sort((a, b) => a.rank - b.rank).slice(0, ranks ? undefined : top);
   const lines = list.map((h) => highlightLine(h, v.id));
   let description = "";
   for (const line of lines) {
@@ -149,7 +154,7 @@ export function highlightsMessage(report: Report, top: number, template = DEFAUL
   return {
     username: "stream-highlights",
     content: list.length
-      ? renderMessage(template, messageVars(report, list.length))
+      ? renderMessage(template === DEFAULT_MESSAGE && list.length === 1 ? DEFAULT_MESSAGE_ONE : template, messageVars(report, list.length))
       : `Stream${v.channel ? ` von **${escapeMarkdown(v.channel)}**` : ""} ausgewertet, keine deutlichen Highlights gefunden.`,
     embeds: [
       {
@@ -185,7 +190,7 @@ export function clipUploadMessage(report: Report, clip: ClipFile, index: number,
   const head = index === 0 ? `🎬 ${total} ${total === 1 ? "Clip" : "Clips"} von ${v.title ? `„${escapeMarkdown(truncate(v.title, 100))}“` : `VOD ${v.id}`}\n` : "";
   return {
     username: "stream-highlights",
-    content: `${head}**#${clip.rank}** ${time} (${clock(clip.end - clip.start)})${shrunk ? " · für Discord verkleinert" : ""}`,
+    content: `${head}**#${clip.rank}** ${time} (${clock(clip.end - clip.start)})${shrunk ? " · Qualität für Discord verringert" : ""}`,
     allowed_mentions: { parse: [] },
   };
 }

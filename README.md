@@ -376,7 +376,7 @@ whisper.cpp selbst bauen und `whisper-cli` in den PATH legen (oder
 
 ## Nach der Auswertung: Discord und Clips
 
-Optional kann das Programm nach jeder Live-Auswertung automatisch
+Optional kann das Programm nach einer Auswertung
 
 - **die besten Highlights in einen Discord-Kanal posten**: Zeit mit Link zur
   Stelle im VOD, Länge, Chat-Ausschlag bzw. Streamer-Marker und was der Chat
@@ -388,9 +388,26 @@ Optional kann das Programm nach jeder Live-Auswertung automatisch
   einen anderen Kanal als die Highlight-Zusammenfassung.
 
 Eingestellt wird das über **⚙ Einstellungen** oben rechts (oder links unter
-**Nach der Auswertung**). Für alle anderen Analysen gibt es im Ergebnis die
-Knöpfe **An Discord senden**, **Clips schneiden** und (sobald Clips da sind)
-**Clips an Discord**, die dieselben Einstellungen nutzen.
+**Nach der Auswertung**).
+
+**Automatisch posten oder erst auswählen:** Unter **Nach der Live-Auswertung**
+wählst du, ob nach dem Stream gleich gepostet wird (die besten „Highlights im
+Post“ als Zusammenfassung, die besten „Anzahl Clips“ als Clips) oder ob
+erst einmal nichts rausgeht. Bei **Erst auswählen** sind im Ergebnis die besten
+Highlights vorausgewählt. Du siehst sie dir in der Vorschau an, änderst die
+Haken und klickst **Auswahl posten**. Zusammenfassung und Clips enthalten
+dann genau diese Highlights, mit ihren ursprünglichen Nummern (#1, #4, …). Bis
+du ausgewählt hast, erinnert ein Hinweis links im Live-Kasten, in der Liste
+der Analysen („wartet auf Auswahl“) und im Fenstertitel („(1) Auswahl offen“).
+**Nichts posten** verwirft die Auswahl. Auf einem Server ohne Oberfläche
+(`npm run live`) ergibt „Erst auswählen“ keinen Sinn, dort automatisch posten.
+
+**Im Ergebnis jeder Analyse** (auch nicht-live) gibt es die Haken und die
+Knöpfe **Auswahl posten** und **Nur schneiden**. Was „Auswahl posten“ macht,
+steht darunter und hängt an den Einstellungen: Zusammenfassung (wenn
+eingeschaltet), Clips schneiden und hochladen (wenn eingeschaltet). Schon
+gepostete Highlights sind mit „✓ Gepostet“ bzw. „✓ Clip in Discord“ markiert,
+noch einmal posten geht nur nach Rückfrage.
 
 **Discord:**
 
@@ -404,7 +421,7 @@ Knöpfe **An Discord senden**, **Clips schneiden** und (sobald Clips da sind)
   behandeln: Wer sie kennt, kann in den Kanal schreiben.
 - **Text über den Highlights:** frei wählbar, mit Platzhaltern `{kanal}`,
   `{titel}`, `{anzahl}`, `{gesamt}`, `{datum}` und `{link}`. Standard:
-  `Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}`.
+  `Neue Highlights von **{kanal}**: die besten {anzahl} Highlights`.
   Discord-Formatierung wie `**fett**` geht.
 - **Highlights im Post:** wie viele der besten Highlights gelistet werden.
 - **Clips in Discord:** Mit **Geschnittene Clips als Video hochladen** geht
@@ -415,10 +432,10 @@ Knöpfe **An Discord senden**, **Clips schneiden** und (sobald Clips da sind)
   der Server erlaubt: 10 MB ohne Boost, 50 MB ab Boost-Stufe 2, 100 MB ab
   Stufe 3. Über den Webhook lässt sich die Boost-Stufe nicht abfragen. Bei
   **Automatisch** (Standard) geht jeder Clip deshalb erst in voller Qualität
-  raus. Lehnt Discord ab, wird er mit ffmpeg für 50 MB bzw. 10 MB verkleinert
+  raus. Lehnt Discord ab, wird seine Qualität mit ffmpeg für 50 MB bzw. 10 MB verringert
   (niedrigere Bitrate, bei Bedarf 720p oder weniger) und noch einmal
   geschickt. Das Programm merkt sich bis zum Neustart, was bei welchem Webhook
-  geklappt hat, und sagt nach dem Upload, warum verkleinert wurde. Wer die
+  geklappt hat, und sagt nach dem Upload, warum die Qualität verringert wurde. Wer die
   Boost-Stufe kennt, stellt die Grenze fest ein; größere Clips werden dann
   gleich verkleinert. Die verkleinerten Dateien liegen im Clip-Ordner unter
   `discord/`. Zur Einordnung: 60 s in 1080p sind etwa 40–70 MB.
@@ -452,15 +469,17 @@ neu:
       { "name": "Highlights", "url": "https://discord.com/api/webhooks/…", "purpose": "highlights" },
       { "name": "Clips", "url": "https://discord.com/api/webhooks/…", "purpose": "clips" }
     ],
-    "message": "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}",
+    "message": "Neue Highlights von **{kanal}**: die besten {anzahl} Highlights",
     "top": 5,
     "uploadClips": true,
     "uploadLimitMb": 0
   },
+  "publish": { "mode": "auto" },
   "clips": { "enabled": true, "mode": "highlight", "count": 5, "paddingSeconds": 5, "maxLengthSeconds": 180, "lengthSeconds": 60, "leadSeconds": 45, "quality": "1080p", "dir": "/srv/clips" }
 }
 ```
 
+`publish.mode` ist `auto` (Standard) oder `manual` (erst auswählen).
 `purpose` ist `all` (Standard, auch für ältere Einträge ohne das Feld),
 `highlights` oder `clips`. `uploadLimitMb` ist `0` (automatisch), `10`, `50`
 oder `100`.
