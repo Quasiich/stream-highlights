@@ -118,6 +118,16 @@
   .estimate strong { font-variant-numeric: tabular-nums; }
   .estimate .parts { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .estimate.warn { background: var(--error-soft); color: var(--error); }
+  .setup-box { margin-top: 10px; font-size: 13px; display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+  .setup-box details { margin: 0; }
+  .setup-box details summary { font-size: 12px; }
+  .setup-box details div { margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .setup-actions .btn { white-space: normal; }
+  .setup-box .progress-bar { margin: 0; }
+  .setup-ok { color: var(--ok); }
+  .setup-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .held-item { background: var(--marker-soft); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
+  .held-item strong { color: var(--marker); }
   .progress-eta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; margin-top: 12px; }
   .progress-eta strong { font-variant-numeric: tabular-nums; }
   .live-voice { margin-top: 4px; }
@@ -298,6 +308,7 @@
         Tonspur lädt das Programm dafür nach dem Stream aus dem VOD. Der PC muss während des Streams laufen.
         <span id="liveNeedsLogin" class="hidden"><br>Dafür zuerst mit Twitch verbinden.</span>
       </p>
+      <div class="setup-box hidden" id="setupBox" aria-live="polite"></div>
       <div id="liveLast" class="side-note hidden"></div>
       <div id="liveError" class="error-box hidden small" role="alert"></div>
       <details id="liveLogBox" class="hidden"><summary>Protokoll</summary><pre class="live-log" id="liveLog"></pre></details>
@@ -367,6 +378,7 @@
             neue Highlights entstehen nur aus den stärksten.
           </p>
           <div class="estimate" id="voiceEstimate" aria-live="polite">Geschätzte Dauer wird berechnet …</div>
+          <div class="setup-box" id="voiceSetup" aria-live="polite"></div>
         </div>
       </fieldset>
       <details>
@@ -588,7 +600,10 @@ $("vodInput").addEventListener("input", () => scheduleEstimate(600));
 
 function saveVoiceSoon() {
   clearTimeout(voiceSaveTimer);
-  voiceSaveTimer = setTimeout(() => api("/api/voice", { method: "POST", body: readVoice() }).catch(() => {}), 800);
+  voiceSaveTimer = setTimeout(
+    () => api("/api/voice", { method: "POST", body: readVoice() }).then(() => refreshSetup()).catch(() => {}),
+    800,
+  );
 }
 for (const id of ["voiceEnabled", "voiceModel", "voiceLanguage", "voiceKeywords", "voiceLoud", "voiceLoudDb", "voiceLoudMin", "voiceLoudTop"]) {
   $(id).addEventListener("input", saveVoiceSoon);
@@ -1032,6 +1047,14 @@ async function showReport(id) {
     ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
     ${voiceLine ? `<div class="note">${voiceLine}</div>` : ""}
     ${r.voiceNote ? `<div class="error-box">${esc(r.voiceNote)}</div>` : ""}
+    ${r.automation?.state === "held" ? `<div class="held-item" style="margin-top:10px">
+        <span><strong>Discord-Post und Clips warten</strong>, bis die Auswertung vollständig ist
+        ${r.voiceNote ? "(siehe oben)" : `(${esc(r.automation.reason || "")})`}. Sie werden nachgeholt, sobald es klappt.</span>
+        <span class="setup-actions">
+          <button class="btn small primary" data-held="retry" data-id="${esc(id)}">Jetzt erneut versuchen</button>
+          <button class="btn small" data-held="release" data-id="${esc(id)}">Ohne Sprache posten</button>
+        </span>
+      </div>` : ""}
     ${clips.length ? `<div class="note">${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} geschnitten: ${esc(clips[0].file.replace(/[\\/][^\\/]*$/, ""))}</div>` : ""}
     <div id="resultNote" class="note hidden" role="status"></div>
     <div class="result-grid">
@@ -1054,6 +1077,7 @@ async function showReport(id) {
     </div>`;
 
   const base = "/api/reports/" + encodeURIComponent(id);
+  bindHeldButtons($("result"));
   $("openFolder").addEventListener("click", () => api(base + "/open", { method: "POST" }));
   if (clips.length) $("openClips").addEventListener("click", () => api(base + "/clips/open", { method: "POST" }).catch((err) => resultNote(err.message, true)));
   $("sendDiscord").addEventListener("click", async () => {
@@ -1329,10 +1353,111 @@ $("liveToggle").addEventListener("change", async () => {
     liveToggleError = err.message;
   }
   await refreshLive();
+  await refreshSetup().catch(() => {});
 });
 // Während der Auswertung öfter, damit Prozent und Restzeit flüssig laufen
 (function pollLive() {
   setTimeout(() => refreshLive().catch(() => {}).finally(pollLive), liveAnalyzing ? 1500 : 5000);
+})();
+
+// ---- Einrichtung & zurückgehaltene Posts ----------------------------------
+// Programme und Internetzugriff werden vorab geprüft, damit Firewall oder
+// Virenschutz fragen, solange jemand am PC ist. Was nach einem Stream wegen
+// fehlender Erlaubnis nicht gepostet wurde, wartet hier.
+let setupState = null;
+
+async function refreshSetup() {
+  setupState = await api("/api/setup");
+  renderSetup();
+}
+
+/** Kurzfassung für die schmale Spalte; der volle Text steht unter "Details" */
+function shortReason(text) {
+  if (/Internet|Firewall|Virenschutz/.test(text || "")) return "Kein Internetzugriff, vermutlich blockieren Firewall oder Virenschutz ein Programm.";
+  const first = String(text || "").split(/(?<=\.)\s/)[0];
+  return first.length > 140 ? first.slice(0, 139) + "…" : first;
+}
+const detailsHtml = (text) => `<details><summary>Details</summary><div>${esc(text)}</div></details>`;
+
+function setupHtml(s, { compact = false } = {}) {
+  if (!s.needed) return "";
+  const missing = s.items.filter((i) => !i.ready && i.id !== "network").map((i) => i.label);
+  const parts = [];
+  if (s.state === "running") {
+    parts.push(`<span>Einrichtung: ${esc(s.message || "")}${s.percent !== undefined ? " " + s.percent + " %" : ""}</span>`);
+    parts.push(`<div class="progress-bar${s.percent === undefined ? " indeterminate" : ""}"><div style="width:${s.percent ?? 0}%"></div></div>`);
+  } else if (s.state === "error") {
+    // In der breiten Sprach-Box der ganze Text, in der Seitenspalte die Kurzfassung
+    parts.push(compact
+      ? `<div class="error-box" style="margin:0">${esc(s.error)}</div>`
+      : `<div class="error-box" style="margin:0">${esc(shortReason(s.error))}${detailsHtml(s.error)}</div>`);
+    parts.push(`<span class="setup-actions"><button class="btn small" data-setup>Erneut prüfen</button></span>`);
+  } else if (missing.length) {
+    parts.push(`<span>Noch nicht eingerichtet: ${esc(missing.join(", "))}. Wird sonst erst nach dem Stream geladen.</span>`);
+    parts.push(`<span class="setup-actions"><button class="btn small" data-setup>Jetzt einrichten</button></span>`);
+  } else {
+    const net = s.items.find((i) => i.id === "network");
+    parts.push(`<span class="setup-ok">✓ Bereit${net?.ready ? ", Internetzugriff geprüft" : ""}.</span>` +
+      (net && !net.ready && !compact ? ` <button class="link-btn" data-setup>Internetzugriff prüfen</button>` : ""));
+  }
+  if (!compact) {
+    for (const h of s.held) {
+      parts.push(`<div class="held-item">
+        <span><strong>Discord-Post wartet:</strong> ${esc(h.title || h.id)}. ${esc(shortReason(h.reason))}
+          ${h.auto ? "Wird alle paar Minuten erneut versucht." : ""}</span>
+        ${detailsHtml(h.reason || "")}
+        <span class="setup-actions">
+          <button class="btn small primary" data-held="retry" data-id="${esc(h.id)}">Jetzt erneut versuchen</button>
+          <button class="btn small" data-held="release" data-id="${esc(h.id)}">Ohne Sprache posten</button>
+        </span>
+      </div>`);
+    }
+  }
+  return parts.join("");
+}
+
+function renderSetup() {
+  const s = setupState;
+  if (!s) return;
+  const liveBox = $("setupBox");
+  const liveOn = $("liveToggle").checked;
+  liveBox.innerHTML = liveOn || s.held.length ? setupHtml(s) : "";
+  liveBox.classList.toggle("hidden", !liveBox.innerHTML);
+  $("voiceSetup").innerHTML = setupHtml(s, { compact: true });
+  for (const box of [liveBox, $("voiceSetup")]) {
+    for (const b of box.querySelectorAll("[data-setup]")) b.addEventListener("click", startSetupNow);
+    bindHeldButtons(box);
+  }
+}
+
+async function startSetupNow() {
+  try {
+    setupState = await api("/api/setup", { method: "POST", body: { voice: readVoice() } });
+    renderSetup();
+  } catch (err) {
+    alert("Einrichtung konnte nicht starten: " + err.message);
+  }
+}
+
+function bindHeldButtons(root) {
+  for (const b of root.querySelectorAll("[data-held]")) {
+    b.addEventListener("click", async () => {
+      const release = b.dataset.held === "release";
+      if (release && !confirm("Highlights ohne Sprach-Auswertung posten und Clips schneiden?")) return;
+      try {
+        $("analyzeError").classList.add("hidden");
+        const job = await api("/api/reports/" + encodeURIComponent(b.dataset.id) + "/" + b.dataset.held, { method: "POST" });
+        $("analyzeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        follow(job.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
+}
+
+(function pollSetup() {
+  setTimeout(() => refreshSetup().catch(() => {}).finally(pollSetup), setupState?.state === "running" ? 1500 : 10000);
 })();
 
 // ---- Update -------------------------------------------------------------
@@ -1474,6 +1599,7 @@ setInterval(() => {
     .catch(() => {});
   await refreshStatus();
   await refreshLive();
+  refreshSetup().catch(() => {});
   refreshAutomation().catch(() => {});
   selectTab(status.twitch ? "vods" : "history");
   const reports = await loadHistory();

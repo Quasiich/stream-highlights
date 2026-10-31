@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/p
 import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { ensureTwitchDownloader, tarCommand } from "./tools.ts";
+import { ensureFfmpeg as ensureFfmpegTool, ensureTwitchDownloader, explainToolError, findFfmpeg, tarCommand } from "./tools.ts";
 import {
   estimate,
   type Estimate,
@@ -38,7 +38,6 @@ const STATS_FILE = join(WHISPER_DIR, "stats.json");
 const RELEASES_URL = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=15";
 const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 const WHISPER_EXE = WIN ? "whisper-cli.exe" : "whisper-cli";
-const FFMPEG_EXE = WIN ? "ffmpeg.exe" : "ffmpeg";
 
 /** "cuda": Build für Nvidia-Grafikkarten, "cpu": läuft überall */
 type Variant = "cuda" | "cpu";
@@ -91,9 +90,6 @@ function findWhisper(variant: Variant): string | undefined {
   return findFile(join(WHISPER_DIR, variant), WHISPER_EXE) ?? (variant === "cpu" ? which("whisper-cli") : undefined);
 }
 
-export function findFfmpeg(): string | undefined {
-  return existsSync(FFMPEG_EXE) ? resolve(FFMPEG_EXE) : which("ffmpeg");
-}
 
 const modelPath = (model: WhisperModel) => join(MODELS_DIR, WHISPER_MODELS[model].file);
 
@@ -247,17 +243,19 @@ async function ensureWhisper(variant: Variant, onProgress: OnProgress): Promise<
   return { exe: findFile(target, WHISPER_EXE)!, variant };
 }
 
-/** ffmpeg im Programmordner oder PATH; unter Windows sonst über TwitchDownloaderCLI laden lassen. */
 async function ensureFfmpeg(onProgress: OnProgress): Promise<string> {
-  const found = findFfmpeg();
-  if (found) return found;
-  if (!WIN) throw new Error("ffmpeg nicht gefunden. Bitte ffmpeg installieren (z. B. apt install ffmpeg).");
-  const tdcli = await ensureTwitchDownloader((message, percent) => onProgress({ stage: "setup", message, percent }));
-  onProgress({ stage: "setup", message: "Lade ffmpeg (einmalig, ca. 100 MB) …" });
-  const res = spawnSync(tdcli, ["ffmpeg", "--download"], { encoding: "utf8", windowsHide: true });
-  const ffmpeg = findFfmpeg();
-  if (!ffmpeg) throw new Error(`ffmpeg konnte nicht geladen werden. ${(res.stderr || res.stdout || "").trim().split(/\r?\n/).at(-1) ?? ""}`);
-  return ffmpeg;
+  return ensureFfmpegTool(undefined, (message, percent) => onProgress({ stage: "setup", message, percent }));
+}
+
+/** Ist alles für die Sprach-Auswertung mit diesem Modell schon da? */
+export async function voiceToolsReady(model: WhisperModel): Promise<{ whisper: boolean; model: boolean }> {
+  return { whisper: Boolean(findWhisper(await preferredVariant())), model: existsSync(modelPath(model)) };
+}
+
+/** Whisper und Modell jetzt laden statt erst bei der ersten Auswertung. */
+export async function prepareVoiceTools(model: WhisperModel, onProgress: OnProgress): Promise<void> {
+  await ensureWhisper(await preferredVariant(), onProgress);
+  await ensureModel(model, onProgress);
 }
 
 // ---- Ton -------------------------------------------------------------------------
@@ -281,8 +279,7 @@ function run(exe: string, args: string[], onLine: (line: string) => void, what: 
     child.on("close", (code) => {
       if (buffer) onLine(buffer);
       if (code === 0) return resolveRun();
-      const last = tail.trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" | ");
-      reject(Object.assign(new Error(`${what} fehlgeschlagen (Code ${code}). ${last}`), { code }));
+      reject(Object.assign(explainToolError(tail, what, exe, code), { code }));
     });
   });
 }

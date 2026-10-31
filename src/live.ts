@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { defaultOptions } from "./analyze.ts";
-import { loadAutomation, runAutomation } from "./automation.ts";
+import { loadAutomation, RETRY_HELD_MS, retryHeld, runAutomation } from "./automation.ts";
 import { startLive } from "./livemode.ts";
 import { OUTPUT_DIR } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
@@ -50,8 +50,16 @@ async function main() {
     ...opts,
     // Ohne gültige Anmeldung beenden, damit systemd/journalctl den Fehler zeigt
     onFatal: () => process.exit(1),
-    onFinished: async (result, log) => runAutomation(result, await loadAutomation(values.settings!), log, values.out!),
+    onFinished: async (result, log) => {
+      await runAutomation(result, await loadAutomation(values.settings!), log, values.out!);
+    },
   });
+
+  // Was wegen fehlendem Internetzugriff zurückgehalten wurde, regelmäßig nachholen
+  const retry = () =>
+    retryHeld(() => loadAutomation(values.settings!), async () => opts.analyze, (line) => console.log(line), values.out!);
+  setInterval(() => void retry(), RETRY_HELD_MS).unref();
+  void retry();
 
   const shutdown = () => service.stop().then(() => process.exit(0));
   process.on("SIGINT", shutdown);

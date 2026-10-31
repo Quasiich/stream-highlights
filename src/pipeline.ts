@@ -52,8 +52,30 @@ export interface Report {
   };
   /** Warum die Sprach-Auswertung fehlt, obwohl sie eingeschaltet war */
   voiceNote?: string;
+  /**
+   * Die Sprach-Auswertung war eingeschaltet, ist aber fehlgeschlagen (nicht nur
+   * übersprungen). `network`: weil das Programm nicht ins Internet kam.
+   */
+  voiceFailed?: { network: boolean };
   /** Aus dem VOD geschnittene Clips, siehe clips.ts */
   clips?: ClipFile[];
+  /** Was nach einer automatischen Auswertung mit Discord und Clips passiert ist, siehe automation.ts */
+  automation?: AutomationState;
+}
+
+/**
+ * "held": Discord-Post und Clips warten, weil die Auswertung unvollständig ist
+ * (z. B. Internetzugriff fehlt); sie werden nachgeholt, sobald es klappt.
+ * "done": erledigt. "released": ohne Sprache freigegeben.
+ */
+export interface AutomationState {
+  state: "held" | "done" | "released";
+  /** Warum zurückgehalten */
+  reason?: string;
+  since?: string;
+  /** Letzter Versuch, das Zurückgehaltene nachzuholen */
+  lastTry?: string;
+  at?: string;
 }
 
 export interface ClipFile {
@@ -104,6 +126,7 @@ export async function runAnalysis(
   let voice: VoiceSignals | undefined;
   let voiceReport: Report["voice"];
   let voiceNote: string | undefined;
+  let voiceFailed: Report["voiceFailed"];
   if (opts.voice?.enabled) {
     if (!log.videoId) {
       voiceNote = "Sprach-Auswertung übersprungen: Für den Ton wird die VOD-ID gebraucht.";
@@ -127,6 +150,7 @@ export async function runAnalysis(
       } catch (err: any) {
         // Ohne Sprache geht es mit Chat und Markern weiter
         voiceNote = `Sprach-Auswertung fehlgeschlagen: ${err.message}`;
+        voiceFailed = { network: Boolean(err.network) };
       }
     }
   }
@@ -149,6 +173,7 @@ export async function runAnalysis(
     },
     ...(voiceReport ? { voice: voiceReport } : {}),
     ...(voiceNote ? { voiceNote } : {}),
+    ...(voiceFailed ? { voiceFailed } : {}),
   };
 
   const dir = join(outDir, log.videoId ?? "local");
