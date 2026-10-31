@@ -106,6 +106,8 @@
   .options label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
   .options input, .options select { color: var(--text); font-size: 15px; }
   .options .wide { grid-column: 1 / -1; }
+  /* Genauigkeit und Sprache: „Ausgewogen (empfohlen)“ braucht etwas mehr Platz */
+  .voice-options { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
   .thresholds { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 14px; margin: 14px 0 0; }
   .thresholds legend { font-size: 13px; color: var(--muted); padding: 0 6px; }
   .thresholds .options { margin-top: 4px; }
@@ -365,7 +367,7 @@
         <legend>Sprache &amp; Lautstärke (Whisper)</legend>
         <label class="check small"><input type="checkbox" id="voiceEnabled"> Gesprochenes und Lautstärke auswerten (optional, dauert länger)</label>
         <div class="voice-body hidden" id="voiceBody">
-          <div class="options" style="margin-top:0">
+          <div class="options voice-options" style="margin-top:0">
             <label>Genauigkeit <select id="voiceModel"></select></label>
             <label>Sprache
               <select id="voiceLanguage">
@@ -587,7 +589,7 @@ let voiceSaveTimer;
 function applyVoice(v) {
   voiceLoaded = true;
   $("voiceModel").innerHTML = status.voice.models
-    .map((m) => `<option value="${esc(m.id)}" title="Whisper-Modell ${esc(m.id)}">${esc(m.label)} · ${m.sizeMb} MB</option>`)
+    .map((m) => `<option value="${esc(m.id)}" title="Whisper-Modell ${esc(m.id)}, ${m.sizeMb} MB">${esc(m.label)}${m.recommended ? " (empfohlen)" : ""}</option>`)
     .join("");
   $("voiceEnabled").checked = Boolean(v.enabled);
   $("voiceModel").value = v.model;

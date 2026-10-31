@@ -353,7 +353,7 @@ Ergebnis.
 | Genauigkeit | Modell | Größe | Grafikkarte* | Prozessor* |
 |---|---|---|---|---|
 | Schnell | base | 148 MB | ca. 2 Min. | ca. 20 Min. |
-| Ausgewogen (Standard) | small | 488 MB | ca. 4 Min. | ca. 50 Min. |
+| Ausgewogen (empfohlen) | small | 488 MB | ca. 4 Min. | ca. 50 Min. |
 | Genau | large-v3-turbo | 574 MB | ca. 7 Min. | ca. 2,5 Std. |
 
 \* grobe Startwerte für 3 Stunden Stream; sie werden nach dem ersten Lauf durch

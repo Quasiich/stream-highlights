@@ -150,7 +150,8 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
       },
       voice: {
         settings: (await loadSettings()).voice ?? defaultVoiceOptions,
-        models: Object.entries(WHISPER_MODELS).map(([id, m]) => ({ id, label: m.label, sizeMb: m.sizeMb })),
+        // Empfohlen ist das Standardmodell ("Ausgewogen")
+        models: Object.entries(WHISPER_MODELS).map(([id, m]) => ({ id, label: m.label, sizeMb: m.sizeMb, recommended: id === defaultVoiceOptions.model })),
         gpu: detectGpu(),
         // Fertige Whisper-Builds gibt es nur für Windows; sonst muss whisper-cli installiert sein
         platform: process.platform === "win32" ? "windows" : process.platform,
