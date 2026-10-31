@@ -28,6 +28,8 @@ export interface LiveService {
   status(): LiveStatus;
   /** Schließt den Mitschnitt; er wird beim nächsten Start fortgesetzt. */
   stop(): Promise<void>;
+  /** Eine Zeile ins Protokoll des Mitschnitts schreiben (z. B. Einrichtung, Nachholen) */
+  log(line: string): void;
 }
 
 export interface LiveServiceOptions extends RecorderOptions {
@@ -132,6 +134,7 @@ export async function startLive(opts: LiveServiceOptions): Promise<LiveService> 
         log: [...lines],
       };
     },
+    log,
     stop() {
       stopped ??= (async () => {
         timers.forEach(clearInterval);

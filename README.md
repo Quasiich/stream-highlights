@@ -32,6 +32,16 @@ Highlight spielt die Stelle im eingebetteten Twitch-Player ab. Links stehen
 alle bisherigen Analysen. Über **Mit Twitch verbinden** oben rechts
 richtest du die [Streamer-Marker](#streamer-marker-optional) ein.
 
+**Neu analysieren:** Jede Auswertung, ob von Hand, aus dem Live-Mitschnitt
+oder ein altes VOD, lässt sich im Ergebnis mit **Neu analysieren** erneut
+berechnen, mit den Einstellungen, die gerade oben eingestellt sind. Chat,
+Transkript und Lautstärke werden dabei wiederverwendet (nur ein anderes
+Whisper-Modell oder eine andere Sprache transkribiert neu). Im Ergebnis steht,
+mit welchen Einstellungen ausgewertet wurde; **Diese Einstellungen oben
+übernehmen** lädt sie ins Formular. Automatisch in Discord gepostet wird nur
+einmal nach der Live-Auswertung eines Streams, nie beim Neu-Analysieren; dafür
+gibt es **An Discord senden**.
+
 Bist du mit Twitch verbunden, zeigt der Reiter **Deine VODs** links deine
 letzten 5 Streams, **Ältere laden** holt jeweils 3 weitere. Ein Klick auf ein
 schon analysiertes VOD (✓ Analysiert) öffnet das Ergebnis, bei allen anderen
@@ -353,7 +363,11 @@ die gemessenen ersetzt.
 
 1. Beim ersten Mal lädt das Programm in den Ordner `tools/`: Whisper
    ([whisper.cpp](https://github.com/ggml-org/whisper.cpp), mit Nvidia-Karte
-   der CUDA-Build), das gewählte Modell und ffmpeg (über TwitchDownloaderCLI).
+   der CUDA-Build), das gewählte Modell und ffmpeg (unter Windows direkt von
+   [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) mit Prüfsumme, sonst über
+   TwitchDownloaderCLI). Mit **Jetzt einrichten** unter „Sprache &
+   Lautstärke“ geht das schon vorab, siehe
+   [Internetzugriff](#internetzugriff-firewall-und-virenschutz).
    Läuft der CUDA-Build auf dem PC nicht, wechselt es von selbst auf den
    Prozessor und merkt sich das.
 2. Es lädt nur die **Tonspur** des VODs (ca. 70 MB pro Stunde), wandelt sie
@@ -363,7 +377,8 @@ die gemessenen ersetzt.
    mit anderen Stichwörtern oder dB-Werten, dauert das nur Sekunden. Nur ein
    anderes Modell oder eine andere Sprache transkribiert neu.
 4. Klappt die Sprach-Auswertung nicht (z. B. kein Internet), gibt es trotzdem
-   das normale Ergebnis aus Chat und Markern, mit einem Hinweis.
+   das normale Ergebnis aus Chat und Markern, mit einem Hinweis. Nach einem
+   Live-Stream warten Discord-Post und Clips dann, bis es klappt (siehe unten).
 
 Die Einstellungen werden bei jeder Änderung gespeichert und gelten sofort
 auch für den Live-Mitschnitt.
@@ -486,6 +501,33 @@ oder `100`.
 
 Über die Kommandozeile geht es mit `npm run analyze -- <VOD> --clips --discord`;
 mit `uploadClips` werden die Clips dabei auch hochgeladen.
+
+### Internetzugriff, Firewall und Virenschutz
+
+stream-highlights und die Programme, die es lädt (TwitchDownloaderCLI,
+ffmpeg, Whisper), brauchen Internetzugriff. Manche Virenschutz-Programme oder
+Firewalls fragen beim ersten Zugriff eines neuen Programms nach einer
+Erlaubnis oder blockieren ihn. Damit das nicht erst nach dem Stream passiert,
+wenn niemand am PC ist:
+
+- **Beim Einschalten des Live-Mitschnitts** (und beim Programmstart mit
+  eingeschaltetem Mitschnitt) lädt das Programm sofort alles, was Sprache und
+  Clips brauchen, und baut einmal eine Verbindung über TwitchDownloaderCLI
+  auf. Fragt der Virenschutz nach, bitte erlauben. Klappt es nicht, steht im
+  Live-Kasten, welches Programm (mit Pfad) freigegeben werden muss, mit
+  **Erneut prüfen**. Fehlt noch etwas, versucht es das Programm außerdem zu
+  Beginn jedes Streams erneut.
+- **Ohne Erlaubnis wird nichts halb gepostet:** Ist die Sprach-Auswertung nach
+  einem Live-Stream gescheitert oder fehlen Programme für die Clips, werden
+  Discord-Post und Clips **zurückgehalten**. Im Live-Kasten und im Ergebnis
+  steht „Discord-Post wartet“. Lag es am Internetzugriff, versucht das
+  Programm es alle 5 Minuten erneut und holt Sprach-Auswertung, Post und Clips
+  automatisch nach, sobald es klappt. Von Hand geht das mit **Jetzt erneut
+  versuchen**; **Ohne Sprache posten** postet das Ergebnis ohne Sprache.
+- ffmpeg kann man auch selbst besorgen: `ffmpeg.exe` von
+  https://www.gyan.dev/ffmpeg/builds/ in den Programmordner legen.
+
+Analysen, die du selbst über **Analysieren** startest, posten nie automatisch.
 
 ## So wird bewertet
 

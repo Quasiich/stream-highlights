@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { CLIP_QUALITIES, type ClipSettings, clipFolder, cutClips, defaultClipSettings, fitClip } from "./clips.ts";
 import {
   clipsMessage,
@@ -20,9 +20,20 @@ import {
   webhookLabel,
   webhooksFor,
 } from "./discord.ts";
-import { type ClipFile, OUTPUT_DIR, type PostedRanks, type Progress, type Report, writeReport } from "./pipeline.ts";
+import type { AnalyzeOptions } from "./analyze.ts";
+import {
+  type AutomationState,
+  type ClipFile,
+  OUTPUT_DIR,
+  type PostedRanks,
+  type Progress,
+  readReport,
+  type Report,
+  runAnalysis,
+  writeReport,
+} from "./pipeline.ts";
 import { loadSettings, SETTINGS_FILE, type Settings } from "./settings.ts";
-import { ensureFfmpeg, ensureTwitchDownloader } from "./tools.ts";
+import { ensureFfmpeg, ensureTwitchDownloader, NetworkBlockedError } from "./tools.ts";
 
 /**
  * "auto": nach der Live-Auswertung gleich posten (die besten n).
@@ -281,7 +292,8 @@ export async function publish(
   outDir = OUTPUT_DIR,
   onProgress: (p: Progress) => void = () => {},
   log: (line: string) => void = () => {},
-  deps: { sendClips?: typeof sendClips } = {},
+  /** release: ohne die fehlgeschlagene Sprach-Auswertung freigegeben; sendClips für Tests */
+  opts: { release?: boolean; sendClips?: typeof sendClips } = {},
 ): Promise<PublishResult> {
   const result: PublishResult = { done: [], errors: [] };
   const done = (line: string) => (result.done.push(line), log(line));
@@ -307,7 +319,7 @@ export async function publish(
       if (s.discord.uploadClips && clips.length) {
         const notes: string[] = [];
         try {
-          const sent = await (deps.sendClips ?? sendClips)(report, clips, s.discord, onProgress, (line) => notes.push(line));
+          const sent = await (opts.sendClips ?? sendClips)(report, clips, s.discord, onProgress, (line) => notes.push(line));
           done(`Clips in Discord hochgeladen (${sent.join(", ")}).`);
           notes.forEach(done);
           report.posted = { ...report.posted, clips: markPosted(report.posted?.clips, clips.map((c) => c.rank)) };
@@ -324,6 +336,8 @@ export async function publish(
   }
 
   delete report.awaitingSelection;
+  // Gilt als erledigt, auch wenn ein Teil fehlschlug: sonst postet ein neuer Versuch den Rest doppelt
+  report.automation = { state: opts.release ? "released" : "done", at: new Date().toISOString() };
   await writeReport(dir, report);
   return result;
 }
@@ -331,10 +345,36 @@ export async function publish(
 /** Die besten n Ränge */
 const topRanks = (report: Report, n: number) => [...report.highlights].sort((a, b) => a.rank - b.rank).slice(0, n).map((h) => h.rank);
 
+/** Wartet diese Auswertung darauf, dass Discord-Post und Clips nachgeholt werden? */
+export function isHeld(report: Report): boolean {
+  return report.automation?.state === "held";
+}
+
+/**
+ * Warum Discord-Post und Clips noch warten sollten, sonst undefined: Die
+ * Sprach-Auswertung ist fehlgeschlagen, oder für die Clips fehlen Programme,
+ * die gerade nicht geladen werden können (z. B. Internetzugriff blockiert).
+ */
+async function holdReason(report: Report, s: AutomationSettings, log: (line: string) => void): Promise<string | undefined> {
+  if (report.voiceFailed) return report.voiceNote ?? "Sprach-Auswertung fehlgeschlagen.";
+  if (wantsClips(s) && report.video.id) {
+    try {
+      const downloader = await ensureTwitchDownloader();
+      await ensureFfmpeg(downloader, (message) => log(`Clips: ${message}`));
+    } catch (err: any) {
+      if (err instanceof NetworkBlockedError) return `Programme für den Clip-Schnitt nicht verfügbar: ${err.message}`;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Läuft nach jeder automatischen (Live-)Auswertung. Im Modus „manuell“ wird
- * nur vermerkt, dass die Auswahl noch aussteht. Fehler werden nur
- * protokolliert: Die Analyse selbst ist da ja schon fertig.
+ * nur vermerkt, dass die Auswahl noch aussteht. Sonst: Ist die Auswertung
+ * unvollständig, wird nichts gepostet oder geschnitten, sondern im Bericht als
+ * "held" vermerkt; der Server holt es nach, sobald es klappt (siehe
+ * retryHeld in server.ts). Mit `release` wird trotzdem gepostet. Andere Fehler
+ * werden nur protokolliert: Die Analyse selbst ist da ja schon fertig.
  */
 export async function runAutomation(
   { report, dir }: { report: Report; dir: string },
@@ -343,14 +383,33 @@ export async function runAutomation(
   outDir = OUTPUT_DIR,
   /** Fortschritt des Clip-Schnitts, für die Oberfläche */
   onProgress: (p: Progress) => void = () => {},
-): Promise<void> {
-  if (!s.discord.enabled && !wantsClips(s)) return;
+  { release = false }: { release?: boolean } = {},
+): Promise<AutomationState["state"] | undefined> {
+  if (!s.discord.enabled && !wantsClips(s)) return undefined;
+  // Nur einmal pro Stream: z. B. wenn ein Mitschnitt nach einem Neustart erneut ausgewertet wird
+  if (report.automation?.state === "done" || report.automation?.state === "released") {
+    log("Discord-Post und Clips sind für diesen Stream schon erledigt, nichts Neues gepostet.");
+    return report.automation.state;
+  }
   if (s.mode === "manual") {
-    if (!report.highlights.length) return;
+    // Ohne Auswahl geht ohnehin nichts raus, zurückhalten ist also unnötig
+    if (!report.highlights.length) return undefined;
     report.awaitingSelection = true;
+    if (isHeld(report)) delete report.automation;
     await writeReport(dir, report);
-    log(`${report.highlights.length} Highlights warten auf deine Auswahl: im Ergebnis ankreuzen und „Auswahl posten“.`);
-    return;
+    log(
+      `${report.highlights.length} Highlights warten auf deine Auswahl: im Ergebnis ankreuzen und „Auswahl posten“.` +
+        (report.voiceFailed ? " Die Sprach-Auswertung ist fehlgeschlagen, mit „Neu analysieren“ lässt sie sich wiederholen." : ""),
+    );
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  const reason = release ? undefined : await holdReason(report, s, log);
+  if (reason) {
+    report.automation = { state: "held", reason, since: report.automation?.since ?? now, lastTry: now };
+    await writeReport(dir, report);
+    log(`Discord-Post und Clips warten: ${reason} Sie werden nachgeholt, sobald es klappt, oder in der Oberfläche freigegeben.`);
+    return "held";
   }
   await publish(
     report,
@@ -363,5 +422,88 @@ export async function runAutomation(
     outDir,
     onProgress,
     log,
+    { release },
   );
+  return report.automation?.state;
+}
+
+/**
+ * Womit eine vorhandene Auswertung erneut läuft: ihre chat.json, falls
+ * vorhanden (auch Live-Mitschnitte ohne VOD), sonst die VOD-ID.
+ */
+export function analysisInput(id: string, outDir = OUTPUT_DIR): string {
+  const chat = join(outDir, id, "chat.json");
+  return existsSync(chat) ? chat : id;
+}
+
+/** Zurückgehaltene Auswertungen, älteste zuerst */
+export async function heldReports(outDir = OUTPUT_DIR): Promise<{ id: string; report: Report }[]> {
+  if (!existsSync(outDir)) return [];
+  const list: { id: string; report: Report }[] = [];
+  for (const entry of await readdir(outDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const report = await readReport(entry.name, outDir).catch(() => undefined);
+    if (report && isHeld(report)) list.push({ id: entry.name, report });
+  }
+  return list.sort((a, b) => (a.report.automation?.since ?? "").localeCompare(b.report.automation?.since ?? ""));
+}
+
+/** Lag es nur am Internetzugriff? Dann lohnt ein automatischer neuer Versuch. */
+export function retriesAutomatically(report: Report): boolean {
+  return report.voiceFailed ? report.voiceFailed.network : /Internet|Firewall|Virenschutz/.test(report.automation?.reason ?? "");
+}
+
+/**
+ * Holt eine zurückgehaltene Auswertung nach: Ist die Sprach-Auswertung
+ * fehlgeschlagen, wird das VOD erneut ausgewertet (Chat und schon Fertiges
+ * werden wiederverwendet), danach Discord und Clips. Klappt es wieder nicht,
+ * bleibt sie zurückgehalten. `release` postet ohne neuen Versuch.
+ */
+export async function resumeHeld(
+  id: string,
+  s: AutomationSettings,
+  analyze: AnalyzeOptions,
+  log: (line: string) => void,
+  { outDir = OUTPUT_DIR, release = false, onProgress = () => {} }: { outDir?: string; release?: boolean; onProgress?: (p: Progress) => void } = {},
+): Promise<AutomationState["state"] | undefined> {
+  const dir = join(outDir, id);
+  let report = await readReport(id, outDir);
+  if (!report) throw new Error("Analyse nicht gefunden");
+  if (report.voiceFailed && !release) {
+    log(`Werte ${report.video.title || id} erneut aus …`);
+    // Der Vermerk "wartet" (mit Zeitpunkt) bleibt dabei erhalten, siehe runAnalysis
+    report = (await runAnalysis(analysisInput(id, outDir), analyze, onProgress, outDir)).report;
+  }
+  return runAutomation({ report, dir }, s, log, outDir, onProgress, { release });
+}
+
+/** Abstand der automatischen neuen Versuche */
+export const RETRY_HELD_MS = 5 * 60_000;
+
+let retrying = false;
+
+/**
+ * Versucht alle zurückgehaltenen Auswertungen erneut, bei denen es am
+ * Internetzugriff lag. Für den Aufruf in festen Abständen; läuft nie doppelt.
+ */
+export async function retryHeld(
+  loadSettings: () => Promise<AutomationSettings>,
+  analyze: () => Promise<AnalyzeOptions>,
+  log: (line: string) => void,
+  outDir = OUTPUT_DIR,
+): Promise<void> {
+  if (retrying) return;
+  retrying = true;
+  try {
+    for (const { id, report } of await heldReports(outDir)) {
+      if (!retriesAutomatically(report)) continue;
+      const state = await resumeHeld(id, await loadSettings(), await analyze(), log, { outDir }).catch((err) => {
+        log(`Erneuter Versuch für ${id} fehlgeschlagen: ${err.message}`);
+        return undefined;
+      });
+      if (state && state !== "held") log(`${report.video.title || id}: nachgeholt, Discord-Post und Clips sind erledigt.`);
+    }
+  } finally {
+    retrying = false;
+  }
 }

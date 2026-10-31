@@ -99,3 +99,26 @@ test("Automatisch: die besten n wie bisher, ohne Webhook für Highlights eine Fe
     discord.restore();
   }
 });
+
+test("Zusammen mit dem Zurückhalten: manuell wird nie zurückgehalten, nach „Auswahl posten“ postet nichts mehr von selbst", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "publish-"));
+  const discord = fakeDiscord();
+  const lines: string[] = [];
+  try {
+    const manual = normalizeAutomation({ publish: { mode: "manual" }, discord: { enabled: true, webhooks: [{ url: WEBHOOK }] } });
+    const r: Report = { ...report(), voiceFailed: { network: true }, voiceNote: "ffmpeg blockiert", automation: { state: "held", reason: "Internet" } };
+    assert.equal(await runAutomation({ report: r, dir }, manual, (l) => lines.push(l)), undefined);
+    assert.equal(r.automation, undefined, "nicht mehr zurückgehalten, es wartet ja auf die Auswahl");
+    assert.equal(r.awaitingSelection, true);
+    assert.match(lines[0], /Sprach-Auswertung ist fehlgeschlagen/);
+
+    await publish(r, dir, { summary: [1] }, manual);
+    const saved: Report = JSON.parse(await readFile(join(dir, "highlights.json"), "utf8"));
+    assert.equal(saved.automation?.state, "done");
+    const auto = normalizeAutomation({ discord: { enabled: true, webhooks: [{ url: WEBHOOK }] } });
+    await runAutomation({ report: r, dir }, auto, () => {});
+    assert.equal(discord.posts.length, 1, "erneute Auswertung postet nicht noch einmal");
+  } finally {
+    discord.restore();
+  }
+});

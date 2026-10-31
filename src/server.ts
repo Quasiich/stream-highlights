@@ -4,7 +4,21 @@ import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
-import { loadAutomation, makeClips, normalizeAutomation, publish, runAutomation, wantsClips, webhookList } from "./automation.ts";
+import {
+  analysisInput,
+  heldReports,
+  loadAutomation,
+  makeClips,
+  normalizeAutomation,
+  publish,
+  resumeHeld,
+  RETRY_HELD_MS,
+  retriesAutomatically,
+  retryHeld,
+  runAutomation,
+  wantsClips,
+  webhookList,
+} from "./automation.ts";
 import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
 import { estimateClipSeconds } from "./clips.ts";
 import { type LiveService, startLive } from "./livemode.ts";
@@ -12,6 +26,7 @@ import { LiveProgress } from "./liveprogress.ts";
 import { listReports, OUTPUT_DIR, parseVideoId, type Progress, readReport, type Report, runAnalysis, writeReport } from "./pipeline.ts";
 import { defaultRecorderOptions } from "./recorder.ts";
 import { loadSettings, updateSettings } from "./settings.ts";
+import { needsAnything, runSetup, type SetupNeeds, setupItems } from "./setup.ts";
 import { findFfmpeg, findTwitchDownloader } from "./tools.ts";
 import { AUTH_FILE, DEFAULT_CLIENT_ID, fetchVod, fetchVods, loadAuth, resolveClientId, startLogin } from "./twitch.ts";
 import { defaultVoiceOptions, parseVoiceOptions, type VoiceOptions, WHISPER_MODELS, type WhisperModel } from "./voice.ts";
@@ -50,6 +65,18 @@ let login: { state: "idle" | "pending" | "done" | "error"; userCode?: string; ve
   state: "idle",
 };
 
+/** Einrichtung vorab (Programme laden, Internetzugriff prüfen), siehe setup.ts */
+let setup: {
+  state: "idle" | "running" | "done" | "error";
+  message?: string;
+  percent?: number;
+  error?: string;
+  /** Der Fehler lag am blockierten Internetzugriff */
+  network?: boolean;
+  networkChecked?: boolean;
+  at?: string;
+} = { state: "idle" };
+
 /** Selbst-Update der .exe, siehe POST /api/update */
 let install: { state: "idle" | "downloading" | "restarting" | "error"; percent?: number; error?: string } = { state: "idle" };
 /** Laufende HTTP-Server, damit sie vor dem Neustart den Port freigeben */
@@ -87,6 +114,8 @@ export function startServer(html: () => Promise<string>, port = PORT): Promise<S
     });
   return Promise.all([listen("127.0.0.1"), listen("::1").catch(() => undefined)]).then((list) => {
     servers = list.filter((s): s is Server => s !== undefined);
+    // Wegen fehlendem Internetzugriff zurückgehaltene Discord-Posts und Clips nachholen
+    setInterval(() => void retryHeldNow(), RETRY_HELD_MS).unref();
     return servers;
   });
 }
@@ -269,16 +298,62 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     return;
   }
 
+  if (path === "/api/setup" && req.method === "GET") return send(res, 200, await setupStatus());
+
+  if (path === "/api/setup" && req.method === "POST") {
+    const body = await readJson(req);
+    // Die Oberfläche schickt die aktuellen Sprach-Einstellungen mit, gebraucht wird, was dort eingestellt ist
+    if (body.voice) await updateSettings({ voice: parseVoiceOptions(body.voice) });
+    startSetup("von Hand");
+    return send(res, 202, await setupStatus());
+  }
+
+  const reanalyzeMatch = path.match(/^\/api\/reports\/([\w-]+)\/reanalyze$/);
+  if (req.method === "POST" && reanalyzeMatch) {
+    if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse." });
+    const id = reanalyzeMatch[1];
+    if (!(await readReport(id))) return send(res, 404, { error: "Analyse nicht gefunden" });
+    // Mit den Einstellungen aus der Oberfläche; Chat, Transkript und Lautstärke
+    // werden wiederverwendet. Gepostet wird dabei nie automatisch.
+    const opts = analyzeOptions(await readJson(req));
+    const jobId = startJob(id, async (progress) => {
+      await runAnalysis(analysisInput(id), opts, progress);
+      return { id };
+    });
+    return send(res, 202, { id: jobId });
+  }
+
+  const heldMatch = path.match(/^\/api\/reports\/([\w-]+)\/(retry|release)$/);
+  if (req.method === "POST" && heldMatch) {
+    if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse." });
+    const [, id, action] = heldMatch;
+    const jobId = startJob(id, async (progress) => {
+      const log = (line: string) => progress({ stage: "analyze", message: line });
+      const state = await resumeHeld(id, await loadAutomation(), await currentAnalyze(), log, {
+        release: action === "release",
+        onProgress: progress,
+      });
+      if (state === "held") throw new Error((await readReport(id))?.automation?.reason ?? "Es klappt noch nicht.");
+      // Ein alter Einrichtungsfehler ist damit wohl erledigt: neu prüfen
+      if (setup.state === "error") startSetup("nach erfolgreichem Versuch");
+      return { id };
+    });
+    return send(res, 202, { id: jobId });
+  }
+
   if (path === "/api/live" && req.method === "GET") return send(res, 200, liveStatus());
 
   if (path === "/api/live" && req.method === "POST") {
     const body = await readJson(req);
     if (body.enabled && !existsSync(AUTH_FILE)) return send(res, 400, { error: "Bitte zuerst mit Twitch verbinden." });
+    if (body.options?.voice) await updateSettings({ voice: parseVoiceOptions(body.options.voice) });
     try {
       await setLive(Boolean(body.enabled), body.options && typeof body.options === "object" ? body.options : undefined);
     } catch (err: any) {
       return send(res, 400, { error: err.message });
     }
+    // Jetzt, solange jemand am PC ist: Programme laden und Internetzugriff prüfen
+    if (body.enabled) startSetup("Live-Mitschnitt eingeschaltet");
     return send(res, 200, liveStatus());
   }
 
@@ -383,6 +458,73 @@ function startJob(input: string, run: (progress: (p: Progress) => void) => Promi
       current.listeners.clear();
     });
   return current.id;
+}
+
+// ---- Einrichtung und Nachholen ---------------------------------------------
+
+/** Analyse-Einstellungen wie zuletzt in der Oberfläche, mit Sprache & Lautstärke */
+async function currentAnalyze(): Promise<AnalyzeOptions> {
+  const options = analyzeOptions(live.options ?? {});
+  const voice = (await loadSettings()).voice;
+  return voice ? { ...options, voice: parseVoiceOptions(voice) } : options;
+}
+
+/** Was die eingeschalteten Funktionen brauchen */
+async function currentNeeds(): Promise<SetupNeeds> {
+  const raw = (await loadSettings()).voice;
+  const voice = raw ? parseVoiceOptions(raw) : undefined;
+  return { voice: voice?.enabled ? voice.model : undefined, clips: (await loadAutomation()).clips.enabled };
+}
+
+/** Ins Protokoll des Live-Mitschnitts, sonst in die Konsole */
+const note = (line: string) => (live.service ? live.service.log(line) : console.log(line));
+
+async function setupStatus() {
+  const needs = await currentNeeds();
+  return {
+    ...setup,
+    needed: needsAnything(needs),
+    items: await setupItems(needs),
+    held: (await heldReports()).map(({ id, report }) => ({
+      id,
+      title: report.video.title,
+      reason: report.automation?.reason,
+      since: report.automation?.since,
+      lastTry: report.automation?.lastTry,
+      auto: retriesAutomatically(report),
+    })),
+  };
+}
+
+/** Lädt Fehlendes und prüft den Internetzugriff, im Hintergrund; läuft nie doppelt. */
+function startSetup(trigger: string): void {
+  if (setup.state === "running") return;
+  setup = { state: "running", message: "Prüfe, was gebraucht wird …" };
+  void (async () => {
+    try {
+      const needs = await currentNeeds();
+      if (!needsAnything(needs)) {
+        setup = { state: "idle" };
+        return;
+      }
+      // Für den Verbindungstest: das neueste VOD des eigenen Kanals
+      const videoId = existsSync(AUTH_FILE) ? (await fetchVods(1).catch(() => undefined))?.vods[0]?.id : undefined;
+      const { networkChecked } = await runSetup(needs, (message, percent) => (setup = { state: "running", message, percent }), videoId);
+      setup = { state: "done", networkChecked, at: new Date().toISOString() };
+      note(`Einrichtung (${trigger}): alles bereit${networkChecked ? ", Internetzugriff geprüft" : ""}.`);
+      // Vielleicht wurde der Zugriff gerade erst erlaubt
+      void retryHeldNow();
+    } catch (err: any) {
+      setup = { state: "error", error: err.message, network: Boolean(err.network), at: new Date().toISOString() };
+      note(`Einrichtung (${trigger}) fehlgeschlagen: ${err.message}`);
+    }
+  })();
+}
+
+/** Zurückgehaltenes nachholen, außer gerade läuft eine Analyse oder Live-Auswertung */
+async function retryHeldNow(): Promise<void> {
+  if ((job && !job.finished) || live.service?.status().state === "analyzing") return;
+  await retryHeld(loadAutomation, currentAnalyze, note).catch((err) => note(`Nachholen fehlgeschlagen: ${err.message}`));
 }
 
 function analyzeOptions(body: any): AnalyzeOptions {
@@ -491,13 +633,13 @@ async function restartLive(throwErrors = false): Promise<void> {
       ...defaultRecorderOptions(OUTPUT_DIR, analyzeOptions(live.options ?? {})),
       // Sprache & Lautstärke wie zuletzt in der Oberfläche eingestellt, nicht wie beim Einschalten
       currentAnalyze: async () => {
-        const options = analyzeOptions(live.options ?? {});
-        const voice = (await loadSettings()).voice;
         // Der Clip-Schnitt kommt danach und zählt schon zur Gesamt-Restzeit
         const { clips } = await loadAutomation();
         liveClipSeconds = clips.enabled ? estimateClipSeconds(clips, !findFfmpeg()) : 0;
-        return voice ? { ...options, voice: parseVoiceOptions(voice) } : options;
+        return currentAnalyze();
       },
+      // Fehlt noch etwas, wird es geladen, solange der Stream läuft
+      onStreamStart: () => startSetup("Stream-Beginn"),
       onProgress: (p) => liveProgress.update("analyze", p, liveClipSeconds),
       onFatal: (message) => {
         live.service = undefined;
@@ -530,6 +672,8 @@ export async function restoreLive(): Promise<void> {
   live.options = settings.live.options;
   await restartLive();
   console.log(live.service ? "Live-Mitschnitt ist eingeschaltet." : `Live-Mitschnitt konnte nicht starten: ${live.error}`);
+  startSetup("Programmstart");
+  void retryHeldNow();
 }
 
 /** Beim Beenden den Mitschnitt sauber schließen, er wird beim nächsten Start fortgesetzt. */

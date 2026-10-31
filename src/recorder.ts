@@ -50,6 +50,11 @@ export interface RecorderOptions {
   onFinished?: (result: AnalysisResult, log: (line: string) => void) => void | Promise<void>;
   /** Fortschritt der Auswertung nach Stream-Ende (VOD-Suche, Chat, Sprache), für die Oberfläche */
   onProgress?: (p: Progress) => void;
+  /**
+   * Ein neuer Stream hat begonnen. Zeit, fehlende Programme für die Auswertung
+   * zu laden, solange der Stream läuft, statt erst danach.
+   */
+  onStreamStart?: () => void;
 }
 
 /** Sekunden zwischen zwei Zeitpunkten (ISO bzw. ms) */
@@ -276,6 +281,7 @@ export class LiveRecorder {
       meta = { streamId: stream.id, startedAt: stream.startedAt, channel: this.channel, gaps: [] };
       if (nowOffset > LATE_START_SECONDS) meta.gaps.push({ from: 0, to: nowOffset });
       this.opts.log(`Stream ${stream.id} läuft, schneide den Chat mit.`);
+      this.opts.onStreamStart?.();
     }
     this.current = { meta, out: createWriteStream(chatPath, { flags: "a" }), messages: count };
     await this.saveMeta(meta);
