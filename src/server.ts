@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
 import {
+  analysisInput,
   heldReports,
   loadAutomation,
   makeClips,
@@ -277,6 +278,21 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     if (body.voice) await updateSettings({ voice: parseVoiceOptions(body.voice) });
     startSetup("von Hand");
     return send(res, 202, await setupStatus());
+  }
+
+  const reanalyzeMatch = path.match(/^\/api\/reports\/([\w-]+)\/reanalyze$/);
+  if (req.method === "POST" && reanalyzeMatch) {
+    if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse." });
+    const id = reanalyzeMatch[1];
+    if (!(await readReport(id))) return send(res, 404, { error: "Analyse nicht gefunden" });
+    // Mit den Einstellungen aus der Oberfläche; Chat, Transkript und Lautstärke
+    // werden wiederverwendet. Gepostet wird dabei nie automatisch.
+    const opts = analyzeOptions(await readJson(req));
+    const jobId = startJob(id, async (progress) => {
+      await runAnalysis(analysisInput(id), opts, progress);
+      return { id };
+    });
+    return send(res, 202, { id: jobId });
   }
 
   const heldMatch = path.match(/^\/api\/reports\/([\w-]+)\/(retry|release)$/);

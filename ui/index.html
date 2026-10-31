@@ -760,30 +760,78 @@ const STAGE_LABEL = {
   clips: "Clips",
 };
 
+/** Alle Einstellungen aus dem Formular, für Analysieren und Neu analysieren */
+function formOptions() {
+  const thresholds = readThresholds();
+  saveThresholds(thresholds);
+  return {
+    top: $("optTop").value,
+    gap: $("optGap").value,
+    bucket: $("optBucket").value,
+    markerLead: $("optMarkerLead").value,
+    ...thresholds,
+    voice: readVoice(),
+  };
+}
+
 $("analyzeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("analyzeError").classList.add("hidden");
-  const thresholds = readThresholds();
-  saveThresholds(thresholds);
   try {
     const job = await api("/api/analyze", {
       method: "POST",
-      body: {
-        input: $("vodInput").value,
-        top: $("optTop").value,
-        gap: $("optGap").value,
-        bucket: $("optBucket").value,
-        markerLead: $("optMarkerLead").value,
-        refresh: $("optRefresh").checked,
-        ...thresholds,
-        voice: readVoice(),
-      },
+      body: { input: $("vodInput").value, refresh: $("optRefresh").checked, ...formOptions() },
     });
     follow(job.id);
   } catch (err) {
     showError(err.message);
   }
 });
+
+/** Eine vorhandene Auswertung mit den Einstellungen oben neu berechnen */
+async function reanalyze(id) {
+  const ok = confirm(
+    "Mit den aktuellen Einstellungen oben neu auswerten?\n\n" +
+    "Chat, Transkript und Lautstärke werden wiederverwendet. Es wird dabei nichts automatisch in Discord gepostet.",
+  );
+  if (!ok) return;
+  $("analyzeError").classList.add("hidden");
+  try {
+    const job = await api("/api/reports/" + encodeURIComponent(id) + "/reanalyze", { method: "POST", body: formOptions() });
+    $("analyzeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    follow(job.id);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+/** Die Einstellungen einer Auswertung ins Formular übernehmen */
+function applyOptions(o) {
+  $("optTop").value = o.top;
+  $("optGap").value = o.minGapSeconds;
+  $("optBucket").value = o.bucketSeconds;
+  $("optMarkerLead").value = o.markerLeadSeconds;
+  $("optMinGifts").value = o.eventMinimums.giftedSubs;
+  $("optMinRaid").value = o.eventMinimums.raidViewers;
+  $("optMinBits").value = o.eventMinimums.bits;
+  saveThresholds(readThresholds());
+  if (o.voice) {
+    applyVoice(o.voice);
+    saveVoiceSoon();
+  }
+}
+
+/** "10 Chat-Highlights, Abstand 120 s, Sprache: Ausgewogen, 3 Stichwörter" */
+function optionsSummary(o) {
+  const parts = [o.top + (Number(o.top) === 1 ? " Chat-Highlight" : " Chat-Highlights"), "Abstand " + o.minGapSeconds + " s", "Fenster " + o.bucketSeconds + " s"];
+  if (o.voice?.enabled) {
+    const model = status.voice.models.find((m) => m.id === o.voice.model)?.label || o.voice.model;
+    parts.push("Sprache: " + model + ", " + o.voice.keywords.length + " Stichwörter" + (o.voice.loudness ? ", laut ab +" + o.voice.loudDb + " dB" : ""));
+  } else {
+    parts.push("ohne Sprache");
+  }
+  return parts.join(" · ");
+}
 
 function setBusy(busy) {
   $("analyzeBtn").disabled = busy;
@@ -1038,12 +1086,16 @@ async function showReport(id) {
       </div>
       <div class="result-actions">
         <a class="btn small" href="https://www.twitch.tv/videos/${esc(v.id)}" target="_blank" rel="noopener">Auf Twitch öffnen</a>
+        <button class="btn small" id="reanalyze" title="Mit den Einstellungen oben neu auswerten">Neu analysieren</button>
         <button class="btn small" id="openFolder">Ordner öffnen</button>
         <button class="btn small" id="sendDiscord">An Discord senden</button>
         <button class="btn small" id="cutClips">${clips.length ? "Clips ergänzen" : "Clips schneiden"}</button>
         ${clips.length ? '<button class="btn small" id="openClips">Clip-Ordner öffnen</button>' : ""}
       </div>
     </div>
+    ${r.options ? `<div class="note">Ausgewertet ${esc(new Date(r.analyzedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }))} mit: ${esc(optionsSummary(r.options))}.
+      <button class="link-btn" id="useOptions">Diese Einstellungen oben übernehmen</button></div>` : ""}
+    ${r.automation?.state === "done" || r.automation?.state === "released" ? `<div class="note">${r.automation.state === "released" ? "Nach dem Stream ohne Sprach-Auswertung in Discord gepostet (freigegeben)" : "Nach dem Stream automatisch in Discord gepostet"}${r.automation.at ? " (" + esc(new Date(r.automation.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })) + ")" : ""}. Neue Auswertungen posten nicht noch einmal; dafür gibt es „An Discord senden“.</div>` : ""}
     ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
     ${voiceLine ? `<div class="note">${voiceLine}</div>` : ""}
     ${r.voiceNote ? `<div class="error-box">${esc(r.voiceNote)}</div>` : ""}
@@ -1078,6 +1130,11 @@ async function showReport(id) {
 
   const base = "/api/reports/" + encodeURIComponent(id);
   bindHeldButtons($("result"));
+  $("reanalyze").addEventListener("click", () => reanalyze(id));
+  $("useOptions")?.addEventListener("click", () => {
+    applyOptions(r.options);
+    $("analyzeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
   $("openFolder").addEventListener("click", () => api(base + "/open", { method: "POST" }));
   if (clips.length) $("openClips").addEventListener("click", () => api(base + "/clips/open", { method: "POST" }).catch((err) => resultNote(err.message, true)));
   $("sendDiscord").addEventListener("click", async () => {

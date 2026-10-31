@@ -151,6 +151,11 @@ export async function runAutomation(
   { release = false }: { release?: boolean } = {},
 ): Promise<AutomationState["state"] | undefined> {
   if (!s.discord.enabled && !s.clips.enabled) return undefined;
+  // Nur einmal pro Stream: z. B. wenn ein Mitschnitt nach einem Neustart erneut ausgewertet wird
+  if (report.automation?.state === "done" || report.automation?.state === "released") {
+    log("Discord-Post und Clips sind für diesen Stream schon erledigt, nichts Neues gepostet.");
+    return report.automation.state;
+  }
   const now = new Date().toISOString();
   const reason = release ? undefined : await holdReason(report, s, log);
   if (reason) {
@@ -192,6 +197,15 @@ export async function runAutomation(
   return finish();
 }
 
+/**
+ * Womit eine vorhandene Auswertung erneut läuft: ihre chat.json, falls
+ * vorhanden (auch Live-Mitschnitte ohne VOD), sonst die VOD-ID.
+ */
+export function analysisInput(id: string, outDir = OUTPUT_DIR): string {
+  const chat = join(outDir, id, "chat.json");
+  return existsSync(chat) ? chat : id;
+}
+
 /** Zurückgehaltene Auswertungen, älteste zuerst */
 export async function heldReports(outDir = OUTPUT_DIR): Promise<{ id: string; report: Report }[]> {
   if (!existsSync(outDir)) return [];
@@ -225,12 +239,10 @@ export async function resumeHeld(
   const dir = join(outDir, id);
   let report = await readReport(id, outDir);
   if (!report) throw new Error("Analyse nicht gefunden");
-  const held = report.automation;
   if (report.voiceFailed && !release) {
     log(`Werte ${report.video.title || id} erneut aus …`);
-    report = (await runAnalysis(id, analyze, onProgress, outDir)).report;
-    // Seit wann sie wartet, bleibt erhalten
-    if (held) report.automation = held;
+    // Der Vermerk "wartet" (mit Zeitpunkt) bleibt dabei erhalten, siehe runAnalysis
+    report = (await runAnalysis(analysisInput(id, outDir), analyze, onProgress, outDir)).report;
   }
   return runAutomation({ report, dir }, s, log, outDir, onProgress, { release });
 }

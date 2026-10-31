@@ -32,6 +32,16 @@ Highlight spielt die Stelle im eingebetteten Twitch-Player ab. Links stehen
 alle bisherigen Analysen. Über **Mit Twitch verbinden** oben rechts
 richtest du die [Streamer-Marker](#streamer-marker-optional) ein.
 
+**Neu analysieren:** Jede Auswertung, ob von Hand, aus dem Live-Mitschnitt
+oder ein altes VOD, lässt sich im Ergebnis mit **Neu analysieren** erneut
+berechnen, mit den Einstellungen, die gerade oben eingestellt sind. Chat,
+Transkript und Lautstärke werden dabei wiederverwendet (nur ein anderes
+Whisper-Modell oder eine andere Sprache transkribiert neu). Im Ergebnis steht,
+mit welchen Einstellungen ausgewertet wurde; **Diese Einstellungen oben
+übernehmen** lädt sie ins Formular. Automatisch in Discord gepostet wird nur
+einmal nach der Live-Auswertung eines Streams, nie beim Neu-Analysieren; dafür
+gibt es **An Discord senden**.
+
 Bist du mit Twitch verbunden, zeigt der Reiter **Deine VODs** links deine
 letzten 5 Streams, **Ältere laden** holt jeweils 3 weitere. Ein Klick auf ein
 schon analysiertes VOD (✓ Analysiert) öffnet das Ergebnis, bei allen anderen

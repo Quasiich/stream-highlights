@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type ChatLog, loadChat } from "./chat.ts";
 import { type AnalyzeOptions, defaultOptions, findHighlights, type Highlight } from "./analyze.ts";
 import { collectEvents, type EventMinimums, type EventSummary, isNotable, type StreamEvent, summarize } from "./events.ts";
@@ -61,6 +61,8 @@ export interface Report {
   clips?: ClipFile[];
   /** Was nach einer automatischen Auswertung mit Discord und Clips passiert ist, siehe automation.ts */
   automation?: AutomationState;
+  /** Mit diesen Einstellungen wurde ausgewertet (fehlt bei älteren Auswertungen) */
+  options?: AnalyzeOptions;
 }
 
 /**
@@ -119,20 +121,23 @@ export async function runAnalysis(
   }
 
   const log = await loadChat(chatPath);
+  // Bei einer chat.json zählt nur das VOD, das darin steht: Ein Live-Mitschnitt
+  // ohne VOD liegt zwar unter output/<Stream-ID>/, die Stream-ID ist aber kein VOD.
+  const vodId = input.endsWith(".json") ? log.videoId : (log.videoId ?? videoId);
   log.videoId ??= videoId;
 
-  const { markers, note } = log.videoId ? await loadMarkers(log.videoId, onProgress) : { markers: [], note: undefined };
+  const { markers, note } = vodId ? await loadMarkers(vodId, onProgress) : { markers: [], note: undefined };
 
   let voice: VoiceSignals | undefined;
   let voiceReport: Report["voice"];
   let voiceNote: string | undefined;
   let voiceFailed: Report["voiceFailed"];
   if (opts.voice?.enabled) {
-    if (!log.videoId) {
-      voiceNote = "Sprach-Auswertung übersprungen: Für den Ton wird die VOD-ID gebraucht.";
+    if (!vodId) {
+      voiceNote = "Sprach-Auswertung übersprungen: Zu diesem Stream gibt es kein VOD, aus dem der Ton geladen werden könnte.";
     } else {
       try {
-        const result = await analyzeVoice(log.videoId, join(outDir, log.videoId), opts.voice, log.length, onProgress);
+        const result = await analyzeVoice(vodId, join(outDir, log.videoId!), opts.voice, log.length, onProgress);
         voice = result.signals;
         voiceReport = {
           model: result.info.model,
@@ -174,10 +179,17 @@ export async function runAnalysis(
     ...(voiceReport ? { voice: voiceReport } : {}),
     ...(voiceNote ? { voiceNote } : {}),
     ...(voiceFailed ? { voiceFailed } : {}),
+    options: opts,
   };
 
   const dir = join(outDir, log.videoId ?? "local");
   await mkdir(dir, { recursive: true });
+  // Erneut ausgewertet: Ob schon gepostet wurde (oder der Post wartet) und
+  // welche Clips es gibt, bleibt erhalten. So postet eine neue Auswertung nie
+  // ein zweites Mal von selbst.
+  const previous = await readReport(basename(dir), outDir).catch(() => undefined);
+  if (previous?.automation) report.automation = previous.automation;
+  if (previous?.clips?.length) report.clips = previous.clips;
   await writeReport(dir, report);
   await writeFile(join(dir, "highlights.md"), toMarkdown(log, highlights, events, opts.eventMinimums));
   return { log, highlights, events, report, dir };
