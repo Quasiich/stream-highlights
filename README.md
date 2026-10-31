@@ -40,7 +40,7 @@ Whisper-Modell oder eine andere Sprache transkribiert neu). Im Ergebnis steht,
 mit welchen Einstellungen ausgewertet wurde; **Diese Einstellungen oben
 übernehmen** lädt sie ins Formular. Automatisch in Discord gepostet wird nur
 einmal nach der Live-Auswertung eines Streams, nie beim Neu-Analysieren; dafür
-gibt es **An Discord senden**.
+gibt es **Auswahl posten** (siehe [unten](#nach-der-auswertung-discord-und-clips)).
 
 Bist du mit Twitch verbunden, zeigt der Reiter **Deine VODs** links deine
 letzten 5 Streams, **Ältere laden** holt jeweils 3 weitere. Ein Klick auf ein
