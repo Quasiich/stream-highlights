@@ -2,11 +2,17 @@ import type { Highlight } from "./analyze.ts";
 import { clock, vodLink } from "./format.ts";
 import type { ClipFile, Report } from "./pipeline.ts";
 
+/** Wofür ein Webhook da ist: "all" bekommt Highlights und Clips */
+export type WebhookPurpose = "all" | "highlights" | "clips";
+export const WEBHOOK_PURPOSES: WebhookPurpose[] = ["all", "highlights", "clips"];
+
 export interface DiscordWebhook {
   /** Nur zur Unterscheidung in Oberfläche und Fehlermeldungen, z. B. "Mods" */
   name: string;
   /** Siehe README. Geheim halten: Wer die URL kennt, kann in den Kanal schreiben. */
   url: string;
+  /** Fehlt bei älteren settings.json, dann "all" */
+  purpose?: WebhookPurpose;
 }
 
 export interface DiscordSettings {
@@ -18,6 +24,23 @@ export interface DiscordSettings {
   top: number;
   /** Text über den Highlights, mit Platzhaltern wie {kanal}, siehe MESSAGE_PLACEHOLDERS */
   message: string;
+  /** Geschnittene Clips als Video an die Clip-Webhooks schicken */
+  uploadClips: boolean;
+  /**
+   * Größte Datei pro Upload in MB: 10 ohne Boost, 50 ab Boost-Stufe 2, 100 ab
+   * Stufe 3. 0 = automatisch: erst in voller Größe versuchen, bei „zu groß“
+   * kleiner rechnen. Discord verrät über den Webhook nicht, wie der Server
+   * geboostet ist.
+   */
+  uploadLimitMb: number;
+}
+
+/** Upload-Grenzen von Discord je Boost-Stufe, größte zuerst */
+export const UPLOAD_LIMITS_MB = [100, 50, 10];
+
+/** Webhooks, die eine Art von Post bekommen */
+export function webhooksFor(webhooks: DiscordWebhook[], kind: "highlights" | "clips"): DiscordWebhook[] {
+  return webhooks.filter((w) => (w.purpose ?? "all") === "all" || w.purpose === kind);
 }
 
 export const DEFAULT_MESSAGE = "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}";
@@ -42,7 +65,14 @@ const SAMPLE_VARS: Record<string, string> = {
   link: "https://www.twitch.tv/videos/2912392719",
 };
 
-export const defaultDiscordSettings: DiscordSettings = { enabled: false, webhooks: [], top: 5, message: DEFAULT_MESSAGE };
+export const defaultDiscordSettings: DiscordSettings = {
+  enabled: false,
+  webhooks: [],
+  top: 5,
+  message: DEFAULT_MESSAGE,
+  uploadClips: false,
+  uploadLimitMb: 0,
+};
 
 /** Discord erlaubt so viele Zeichen im Text einer Nachricht */
 const MAX_CONTENT = 2000;
@@ -147,6 +177,19 @@ export function clipsMessage(report: Report, clips: ClipFile[], folder: string):
   };
 }
 
+/** Nachricht zu einem hochgeladenen Clip; der erste nennt den Stream */
+export function clipUploadMessage(report: Report, clip: ClipFile, index: number, total: number, shrunk = false): DiscordPayload {
+  const v = report.video;
+  // <…> um den Link: sonst hängt Discord unter jedes Video eine Twitch-Vorschau des ganzen VODs
+  const time = v.id ? `[${clock(clip.start)}](<${vodLink(v.id, clip.start)}>)` : clock(clip.start);
+  const head = index === 0 ? `🎬 ${total} ${total === 1 ? "Clip" : "Clips"} von ${v.title ? `„${escapeMarkdown(truncate(v.title, 100))}“` : `VOD ${v.id}`}\n` : "";
+  return {
+    username: "stream-highlights",
+    content: `${head}**#${clip.rank}** ${time} (${clock(clip.end - clip.start)})${shrunk ? " · für Discord verkleinert" : ""}`,
+    allowed_mentions: { parse: [] },
+  };
+}
+
 /** Testnachricht mit einer Vorschau des eigenen Textes (Beispielwerte) */
 export function testMessage(template = DEFAULT_MESSAGE): DiscordPayload {
   return {
@@ -161,6 +204,15 @@ export function testMessage(template = DEFAULT_MESSAGE): DiscordPayload {
 }
 
 export const webhookLabel = (w: DiscordWebhook, index: number) => w.name || `Webhook ${index + 1}`;
+
+/** Datei als Anhang einer Nachricht */
+export interface DiscordFile {
+  name: string;
+  data: Uint8Array<ArrayBuffer>;
+}
+
+/** Discord lehnt die Datei als zu groß für diesen Server ab */
+export class TooLargeError extends Error {}
 
 /** Schickt an alle Webhooks; ein Fehler bei einem hält die anderen nicht auf. */
 export async function postToAll(
@@ -184,14 +236,15 @@ export async function postToAll(
  * Schickt eine Nachricht an den Webhook. Bei Rate-Limit wird einmal nach der
  * von Discord genannten Zeit wiederholt. Die URL steht nie in Fehlermeldungen.
  */
-export async function postToDiscord(webhookUrl: string, payload: DiscordPayload, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function postToDiscord(
+  webhookUrl: string,
+  payload: DiscordPayload,
+  fetchImpl: typeof fetch = fetch,
+  files: DiscordFile[] = [],
+): Promise<void> {
   if (!isWebhookUrl(webhookUrl)) throw new Error("Das ist keine gültige Discord-Webhook-URL (https://discord.com/api/webhooks/…).");
   for (let attempt = 1; ; attempt++) {
-    const res = await fetchImpl(webhookUrl.trim(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch((err) => {
+    const res = await fetchImpl(webhookUrl.trim(), { method: "POST", ...requestBody(payload, files) }).catch((err) => {
       throw new Error(`Discord ist nicht erreichbar (${err.message}).`);
     });
     if (res.ok) return;
@@ -200,7 +253,17 @@ export async function postToDiscord(webhookUrl: string, payload: DiscordPayload,
       await new Promise((resolve) => setTimeout(resolve, Math.min(10, Number(body.retry_after) || 2) * 1000));
       continue;
     }
+    if (res.status === 413 || body.code === 40005) throw new TooLargeError("Die Datei ist zu groß für diesen Discord-Server.");
     if (res.status === 401 || res.status === 404) throw new Error("Discord kennt diesen Webhook nicht (gelöscht oder falsch kopiert?).");
     throw new Error(`Discord hat abgelehnt (${res.status}${body.message ? `: ${body.message}` : ""}).`);
   }
+}
+
+/** JSON, oder mit Dateien multipart wie von Discord verlangt (payload_json + files[n]) */
+function requestBody(payload: DiscordPayload, files: DiscordFile[]): RequestInit {
+  if (!files.length) return { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({ ...payload, attachments: files.map((f, id) => ({ id, filename: f.name })) }));
+  files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.data], { type: "video/mp4" }), f.name));
+  return { body: form };
 }

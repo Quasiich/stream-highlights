@@ -13,7 +13,7 @@ import { analyzeVoice } from "./whisper.ts";
 export const OUTPUT_DIR = "output";
 
 export interface Progress {
-  stage: "tools" | "chat" | "markers" | "setup" | "audio" | "transcribe" | "analyze" | "clips";
+  stage: "tools" | "chat" | "markers" | "setup" | "audio" | "transcribe" | "analyze" | "clips" | "discord";
   message: string;
   /** 0–100, falls bekannt */
   percent?: number;

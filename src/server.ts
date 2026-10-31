@@ -4,7 +4,7 @@ import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { type AnalyzeOptions, defaultOptions } from "./analyze.ts";
-import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendHighlights, webhookList } from "./automation.ts";
+import { loadAutomation, makeClips, normalizeAutomation, runAutomation, sendClips, sendHighlights, webhookList } from "./automation.ts";
 import { DEFAULT_MESSAGE, isWebhookUrl, MESSAGE_PLACEHOLDERS, postToDiscord, testMessage } from "./discord.ts";
 import { estimateClipSeconds } from "./clips.ts";
 import { type LiveService, startLive } from "./livemode.ts";
@@ -188,7 +188,8 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
       return send(res, 400, { error: `${name}: Das ist keine gültige Discord-Webhook-URL (https://discord.com/api/webhooks/…).` });
     }
     const s = normalizeAutomation(body);
-    if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte mindestens einen Discord-Webhook eintragen." });
+    if (body.discord?.enabled && !s.discord.enabled) return send(res, 400, { error: "Für den automatischen Post bitte mindestens einen Discord-Webhook für Highlights eintragen." });
+    if (body.discord?.uploadClips && !s.discord.uploadClips) return send(res, 400, { error: "Für den Clip-Upload bitte mindestens einen Discord-Webhook für Clips eintragen." });
     await updateSettings({ discord: { ...s.discord }, clips: { ...s.clips } });
     return send(res, 200, s);
   }
@@ -205,6 +206,23 @@ async function route(req: IncomingMessage, res: ServerResponse, html: () => Prom
     if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
     const sent = await sendHighlights(report, (await loadAutomation()).discord);
     return send(res, 200, { sent });
+  }
+
+  const discordClipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/discord\/clips$/);
+  if (req.method === "POST" && discordClipsMatch) {
+    if (job && !job.finished) return send(res, 409, { error: "Es läuft schon eine Analyse oder ein Clip-Schnitt." });
+    const reportId = discordClipsMatch[1];
+    const report = await readReport(reportId);
+    if (!report) return send(res, 404, { error: "Analyse nicht gefunden" });
+    const clips = (report.clips ?? []).filter((c) => existsSync(c.file));
+    const { discord } = await loadAutomation();
+    const id = startJob(reportId, async (progress) => {
+      const notes: string[] = [];
+      const sent = await sendClips(report, clips, discord, progress, (line) => notes.push(line));
+      const done = `${clips.length} ${clips.length === 1 ? "Clip" : "Clips"} in Discord hochgeladen: ${sent.join(", ")}.`;
+      return { id: reportId, note: [done, ...notes].join("\n") };
+    });
+    return send(res, 202, { id });
   }
 
   const clipsMatch = path.match(/^\/api\/reports\/([\w-]+)\/clips$/);

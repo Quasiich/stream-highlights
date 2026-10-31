@@ -1,6 +1,7 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Highlight } from "./analyze.ts";
 import { clock } from "./format.ts";
 import type { ClipFile, Progress, Report } from "./pipeline.ts";
@@ -178,4 +179,53 @@ export async function cutClips(
   if (!done.length && errors.length) throw new Error(errors[0]);
   onProgress({ stage: "clips", message: `${done.length} von ${ranges.length} Clips fertig: ${folder}`, percent: 100 });
   return done;
+}
+
+/** Tonspur im verkleinerten Clip */
+const AUDIO_KBPS = 96;
+/** Etwas Luft unter der Grenze, die Bitrate trifft ffmpeg nicht aufs Byte */
+const SIZE_MARGIN = 0.9;
+
+/**
+ * Auflösung und Videobitrate, damit ein Clip unter limitMb bleibt. Je weniger
+ * Bitrate übrig ist, desto kleiner das Bild, sonst wird es nur Matsch.
+ * undefined, wenn der Clip dafür zu lang ist.
+ */
+export function shrinkPlan(seconds: number, limitMb: number): { height: number; videoKbps: number } | undefined {
+  const videoKbps = Math.floor((limitMb * 8000 * SIZE_MARGIN) / Math.max(1, seconds)) - AUDIO_KBPS;
+  if (videoKbps < 150) return undefined;
+  const height = videoKbps >= 3000 ? 1080 : videoKbps >= 1000 ? 720 : videoKbps >= 600 ? 480 : 360;
+  return { height, videoKbps };
+}
+
+/**
+ * Rechnet einen Clip mit ffmpeg auf höchstens limitMb herunter, für den
+ * Discord-Upload. Das Ergebnis liegt in <Clip-Ordner>/discord/ und wird beim
+ * nächsten Mal wiederverwendet. Passt der Clip schon, kommt er unverändert zurück.
+ */
+export async function fitClip(ffmpeg: string, clip: ClipFile, limitMb: number): Promise<string> {
+  if ((await stat(clip.file)).size <= limitMb * 1e6) return clip.file;
+  const target = join(dirname(clip.file), "discord", basename(clip.file).replace(/\.mp4$/, `_${limitMb}mb.mp4`));
+  if (existsSync(target)) return target;
+  const plan = shrinkPlan(clip.end - clip.start, limitMb);
+  if (!plan) throw new Error(`Clip #${clip.rank} ist zu lang für ${limitMb} MB.`);
+  await mkdir(dirname(target), { recursive: true });
+  const partial = target.replace(/\.mp4$/, ".part.mp4");
+  const v = plan.videoKbps;
+  const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", clip.file, "-vf", `scale=-2:'min(${plan.height},ih)'`];
+  args.push("-c:v", "libx264", "-preset", "veryfast", "-b:v", `${v}k`, "-maxrate", `${v}k`, "-bufsize", `${v * 2}k`);
+  args.push("-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-movflags", "+faststart", partial);
+  try {
+    await new Promise<void>((done, fail) =>
+      execFile(ffmpeg, args, { windowsHide: true, maxBuffer: 1 << 20 }, (err, _out, stderr) =>
+        err ? fail(new Error(`Verkleinern von Clip #${clip.rank} fehlgeschlagen. ${String(stderr).trim().split(/\r?\n/).at(-1) ?? ""}`)) : done(),
+      ),
+    );
+    if ((await stat(partial)).size > limitMb * 1e6) throw new Error(`Clip #${clip.rank} passt auch verkleinert nicht in ${limitMb} MB.`);
+    await rename(partial, target);
+  } catch (err) {
+    await rm(partial, { force: true });
+    throw err;
+  }
+  return target;
 }

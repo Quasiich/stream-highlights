@@ -62,9 +62,9 @@ test("mehrere Webhooks, ungültige fallen weg, alte settings.json mit einer webh
       message: "   ",
     },
   });
-  assert.deepEqual(s.discord.webhooks, [{ name: "Mods", url: WEBHOOK }, { name: "", url: `${WEBHOOK}2` }]);
+  assert.deepEqual(s.discord.webhooks, [{ name: "Mods", url: WEBHOOK, purpose: "all" }, { name: "", url: `${WEBHOOK}2`, purpose: "all" }]);
   assert.equal(s.discord.message, DEFAULT_MESSAGE, "leerer Text → Standardtext");
-  assert.deepEqual(normalizeAutomation({ discord: { webhookUrl: WEBHOOK } }).discord.webhooks, [{ name: "", url: WEBHOOK }]);
+  assert.deepEqual(normalizeAutomation({ discord: { webhookUrl: WEBHOOK } }).discord.webhooks, [{ name: "", url: WEBHOOK, purpose: "all" }]);
 });
 
 test("Einstellungen werden begrenzt und ohne gültigen Webhook nicht automatisch gepostet", () => {

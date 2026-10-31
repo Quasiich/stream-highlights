@@ -212,8 +212,11 @@
   .field-head { margin: 16px 0 4px; }
   .field-note { margin: 0 0 8px; }
   .hooks { display: grid; gap: 8px; margin-bottom: 8px; }
-  .hook { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
-  @media (max-width: 560px) { .hook { grid-template-columns: 1fr auto auto; } .hook input:first-child { grid-column: 1 / -1; } }
+  .hook { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .hook-row2 { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .hook-row2 label { display: flex; gap: 6px; align-items: center; }
+  .hook + .hook { border-top: 1px solid var(--line); padding-top: 8px; }
+  @media (max-width: 560px) { .hook { grid-template-columns: minmax(0, 1fr) auto; } .hook .hook-url { grid-column: 1 / -1; } }
   .hook-status { grid-column: 1 / -1; font-size: 12px; margin-top: -4px; }
   .hook-status.ok { color: var(--ok); }
   .hook-status.error { color: var(--error); }
@@ -432,7 +435,7 @@
       <label class="check small"><input type="checkbox" id="dcEnabled"> Highlights nach jedem Stream automatisch posten</label>
 
       <h3 class="field-head">Webhooks</h3>
-      <p class="small muted field-note">Jeder Post geht an alle eingetragenen Webhooks, also in alle Kanäle. In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → Webhook-URL kopieren.</p>
+      <p class="small muted field-note">Pro Webhook wählst du, was in diesen Kanal geht: die Highlight-Zusammenfassung, die Clips oder beides. So können Highlights und Clips in verschiedenen Kanälen landen. In Discord: Kanal bearbeiten → Integrationen → Webhooks → Neuer Webhook → Webhook-URL kopieren.</p>
       <div id="dcHooks" class="hooks"></div>
       <button class="btn small" type="button" id="dcAdd">+ Webhook hinzufügen</button>
 
@@ -445,6 +448,20 @@
       <div class="options">
         <label>Highlights im Post <input type="number" id="dcTop" min="1" max="25"></label>
       </div>
+
+      <h3 class="field-head">Clips in Discord</h3>
+      <label class="check small"><input type="checkbox" id="dcUploadClips"> Geschnittene Clips als Video hochladen (an die Webhooks für Clips)</label>
+      <div class="options" id="dcUploadOptions">
+        <label class="wide">Upload-Grenze des Servers
+          <select id="dcUploadLimit">
+            <option value="0">Automatisch: größte, die der Server annimmt</option>
+            <option value="10">10 MB: Server ohne Boost</option>
+            <option value="50">50 MB: ab Boost-Stufe 2</option>
+            <option value="100">100 MB: ab Boost-Stufe 3</option>
+          </select>
+        </label>
+      </div>
+      <p class="small muted" id="dcUploadHint"></p>
     </fieldset>
     <fieldset class="thresholds">
       <legend>Clips aus dem VOD</legend>
@@ -743,6 +760,7 @@ const STAGE_LABEL = {
   transcribe: "Whisper",
   analyze: "Auswertung",
   clips: "Clips",
+  discord: "Discord",
 };
 
 $("analyzeForm").addEventListener("submit", async (e) => {
@@ -812,10 +830,11 @@ function follow(jobId) {
   source.addEventListener("done", async (e) => {
     source.close();
     setBusy(false);
-    const { id } = JSON.parse(e.data);
+    const { id, note } = JSON.parse(e.data);
     markAnalyzed(id);
     await loadHistory();
     await showReport(id);
+    if (note) resultNote(note);
     scheduleEstimate();
   });
   source.addEventListener("failed", (e) => {
@@ -1027,6 +1046,7 @@ async function showReport(id) {
         <button class="btn small" id="sendDiscord">An Discord senden</button>
         <button class="btn small" id="cutClips">${clips.length ? "Clips ergänzen" : "Clips schneiden"}</button>
         ${clips.length ? '<button class="btn small" id="openClips">Clip-Ordner öffnen</button>' : ""}
+        ${clips.length ? '<button class="btn small" id="sendClips">Clips an Discord</button>' : ""}
       </div>
     </div>
     ${r.markerNote ? `<div class="note">${esc(r.markerNote)}</div>` : ""}
@@ -1067,6 +1087,16 @@ async function showReport(id) {
       $("sendDiscord").disabled = false;
     }
   });
+  if (clips.length) $("sendClips").addEventListener("click", async () => {
+    $("analyzeError").classList.add("hidden");
+    try {
+      const job = await api(base + "/discord/clips", { method: "POST" });
+      follow(job.id);
+      $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      resultNote(err.message, true);
+    }
+  });
   $("cutClips").addEventListener("click", async () => {
     $("analyzeError").classList.add("hidden");
     try {
@@ -1088,6 +1118,8 @@ function resultNote(message, isError = false) {
   const note = $("resultNote");
   note.textContent = message;
   note.className = isError ? "error-box" : "note ok";
+  // Mehrere Zeilen, z. B. Hinweis, warum Clips verkleinert wurden
+  note.style.whiteSpace = "pre-line";
 }
 
 function describe(e) {
@@ -1109,15 +1141,18 @@ function playHighlight(videoId, h, row) {
 
 // ---- Nach der Auswertung (Discord, Clips) -------------------------------
 let automation = null;
+const PURPOSES = { all: "Highlights + Clips", highlights: "Nur Highlights", clips: "Nur Clips" };
+const forKind = (hooks, kind) => hooks.filter((h) => (h.purpose || "all") === "all" || h.purpose === kind);
 const CLIP_FIELDS = [["count", "clCount"], ["lengthSeconds", "clLength"], ["leadSeconds", "clLead"], ["paddingSeconds", "clPadding"], ["maxLengthSeconds", "clMax"]];
 
 async function refreshAutomation() {
   automation = await api("/api/automation");
   const d = automation.discord, c = automation.clips;
-  $("autoDiscordDot").classList.toggle("on", d.enabled);
+  const plural = (n) => (n === 1 ? "1 Webhook" : n + " Webhooks");
+  $("autoDiscordDot").classList.toggle("on", d.enabled || d.uploadClips);
   $("autoDiscordText").textContent = d.enabled
-    ? "Discord: die besten " + d.top + " an " + (d.webhooks.length === 1 ? "1 Webhook" : d.webhooks.length + " Webhooks")
-    : "Discord: aus";
+    ? "Discord: die besten " + d.top + " an " + plural(forKind(d.webhooks, "highlights").length) + (d.uploadClips ? ", Clips an " + plural(forKind(d.webhooks, "clips").length) : "")
+    : d.uploadClips ? "Discord: Clips an " + plural(forKind(d.webhooks, "clips").length) : "Discord: aus";
   $("autoClipsDot").classList.toggle("on", c.enabled);
   $("autoClipsText").textContent = c.enabled
     ? "Clips: " + c.count + " Stück, " + (c.mode === "fixed" ? c.lengthSeconds + " s" : "Highlight-Länge, max. " + c.maxLengthSeconds + " s")
@@ -1132,6 +1167,19 @@ function showClipMode() {
   $("clHint").textContent += " Mit Zielordner landen die Clips in einem Unterordner pro Stream (Datum_VOD-ID). Beim ersten Mal wird ffmpeg automatisch geladen (ca. 80 MB).";
 }
 $("clMode").addEventListener("change", showClipMode);
+
+function showUploadOptions() {
+  const on = $("dcUploadClips").checked;
+  $("dcUploadOptions").classList.toggle("hidden", !on);
+  $("dcUploadHint").classList.toggle("hidden", !on);
+  const limit = Number($("dcUploadLimit").value);
+  $("dcUploadHint").textContent = (limit
+    ? "Clips über " + limit + " MB werden vorher verkleinert (niedrigere Auflösung/Bitrate). Ist der Server schwächer geboostet als gewählt, lehnt Discord den Upload ab."
+    : "Discord verrät über den Webhook nicht, wie der Server geboostet ist. Deshalb geht jeder Clip erst in voller Qualität raus. Ist er zu groß, wird er für 50 MB (Boost-Stufe 2) bzw. 10 MB (ohne Boost) verkleinert und noch einmal geschickt.") +
+    " Ein Clip pro Nachricht. Als Richtwert: 60 s in 1080p sind etwa 40–70 MB.";
+}
+$("dcUploadClips").addEventListener("change", showUploadOptions);
+$("dcUploadLimit").addEventListener("change", showUploadOptions);
 
 function autoMessage(message, isError = false) {
   $("autoError").classList.toggle("hidden", !isError);
@@ -1162,17 +1210,21 @@ function insertPlaceholder(key) {
   renderPreview();
 }
 
-function addHookRow(hook = { name: "", url: "" }) {
+function addHookRow(hook = { name: "", url: "", purpose: "all" }) {
   const row = document.createElement("div");
   row.className = "hook";
   row.innerHTML = `
     <input type="text" class="hook-name" placeholder="Name, z. B. Mods" maxlength="50" aria-label="Name des Webhooks" autocomplete="off">
     <input type="text" class="hook-url" placeholder="https://discord.com/api/webhooks/…" aria-label="Webhook-URL" autocomplete="off" spellcheck="false">
-    <button class="btn small" type="button" data-test>Testnachricht senden</button>
     <button class="btn small" type="button" data-remove aria-label="Webhook entfernen" title="Entfernen">✕</button>
+    <div class="hook-row2">
+      <label class="small muted">Für <select class="hook-purpose" aria-label="Wofür ist dieser Webhook?">${Object.entries(PURPOSES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+      <button class="btn small" type="button" data-test>Testnachricht senden</button>
+    </div>
     <div class="hook-status hidden" role="status"></div>`;
   row.querySelector(".hook-name").value = hook.name;
   row.querySelector(".hook-url").value = hook.url;
+  row.querySelector(".hook-purpose").value = hook.purpose || "all";
   row.querySelector("[data-remove]").addEventListener("click", () => row.remove());
   const testBtn = row.querySelector("[data-test]");
   const statusEl = row.querySelector(".hook-status");
@@ -1198,7 +1250,7 @@ $("dcAdd").addEventListener("click", () => addHookRow().querySelector(".hook-nam
 
 function readHooks() {
   return [...$("dcHooks").querySelectorAll(".hook")]
-    .map((row) => ({ name: row.querySelector(".hook-name").value.trim(), url: row.querySelector(".hook-url").value.trim() }))
+    .map((row) => ({ name: row.querySelector(".hook-name").value.trim(), url: row.querySelector(".hook-url").value.trim(), purpose: row.querySelector(".hook-purpose").value }))
     .filter((h) => h.url);
 }
 
@@ -1216,6 +1268,9 @@ async function openSettings() {
   for (const b of $("dcPlaceholders").querySelectorAll("button")) b.addEventListener("click", () => insertPlaceholder(b.dataset.key));
   renderPreview();
   $("dcTop").value = d.top;
+  $("dcUploadClips").checked = d.uploadClips;
+  $("dcUploadLimit").value = String(d.uploadLimitMb);
+  showUploadOptions();
   $("clEnabled").checked = c.enabled;
   $("clMode").value = c.mode;
   $("clQuality").value = c.quality;
@@ -1234,7 +1289,14 @@ $("autoForm").addEventListener("submit", async (e) => {
     await api("/api/automation", {
       method: "POST",
       body: {
-        discord: { enabled: $("dcEnabled").checked, webhooks: readHooks(), message: $("dcMessage").value, top: $("dcTop").value },
+        discord: {
+          enabled: $("dcEnabled").checked,
+          webhooks: readHooks(),
+          message: $("dcMessage").value,
+          top: $("dcTop").value,
+          uploadClips: $("dcUploadClips").checked,
+          uploadLimitMb: $("dcUploadLimit").value,
+        },
         clips: {
           enabled: $("clEnabled").checked,
           mode: $("clMode").value,

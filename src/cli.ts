@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { defaultOptions } from "./analyze.ts";
-import { loadAutomation, makeClips, sendHighlights } from "./automation.ts";
+import { loadAutomation, makeClips, sendClips, sendHighlights } from "./automation.ts";
 import { clipFolder } from "./clips.ts";
 import { duration, toConsole } from "./format.ts";
 import { OUTPUT_DIR, type Progress, runAnalysis } from "./pipeline.ts";
@@ -117,6 +117,10 @@ async function main() {
   if (values.clips) {
     const clips = await makeClips(report, dir, automation.clips, values.out!, progress, (line) => console.log(`\n${line}`));
     console.log(`${clips.length} Clips in ${clipFolder(report, automation.clips, values.out!)}`);
+    if (values.discord && automation.discord.uploadClips && clips.length) {
+      const sent = await sendClips(report, clips, automation.discord, progress, (line) => console.log(`\n${line}`));
+      console.log(`Clips in Discord hochgeladen (${sent.join(", ")}).`);
+    }
   }
 }
 

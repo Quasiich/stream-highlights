@@ -384,18 +384,22 @@ Optional kann das Programm nach jeder Live-Auswertung automatisch
 - **die Highlights als MP4 aus dem VOD schneiden**, ohne den ganzen Stream
   herunterzuladen. Beim ersten Mal lädt TwitchDownloaderCLI dafür ffmpeg in
   den Programmordner (ca. 80 MB).
+- **die geschnittenen Clips als Videos in Discord hochladen**, auf Wunsch in
+  einen anderen Kanal als die Highlight-Zusammenfassung.
 
 Eingestellt wird das über **⚙ Einstellungen** oben rechts (oder links unter
 **Nach der Auswertung**). Für alle anderen Analysen gibt es im Ergebnis die
-Knöpfe **An Discord senden** und **Clips schneiden**, die dieselben
-Einstellungen nutzen.
+Knöpfe **An Discord senden**, **Clips schneiden** und (sobald Clips da sind)
+**Clips an Discord**, die dieselben Einstellungen nutzen.
 
 **Discord:**
 
 - **Webhooks:** In Discord den Kanal bearbeiten → Integrationen → Webhooks →
   Neuer Webhook → Webhook-URL kopieren und in den Einstellungen eintragen. Es
-  gehen mehrere (z. B. „Mods“ und „Community“), jeder Post geht dann in alle
-  Kanäle. **Testnachricht senden** neben jedem Webhook prüft ihn und zeigt
+  gehen mehrere (z. B. „Mods“ und „Community“). Pro Webhook wählst du unter
+  **Für**, was in diesen Kanal geht: **Highlights + Clips**, **Nur
+  Highlights** (die Zusammenfassung) oder **Nur Clips**. So landen z. B. die
+  Highlights in `#highlights` und die Videos in `#clips`. **Testnachricht senden** neben jedem Webhook prüft ihn und zeigt
   gleich den eigenen Text mit Beispielwerten. Die URLs wie Passwörter
   behandeln: Wer sie kennt, kann in den Kanal schreiben.
 - **Text über den Highlights:** frei wählbar, mit Platzhaltern `{kanal}`,
@@ -403,6 +407,21 @@ Einstellungen nutzen.
   `Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}`.
   Discord-Formatierung wie `**fett**` geht.
 - **Highlights im Post:** wie viele der besten Highlights gelistet werden.
+- **Clips in Discord:** Mit **Geschnittene Clips als Video hochladen** geht
+  nach dem Schnitt jeder Clip als eigene Nachricht an die Webhooks für Clips,
+  mit Rang und Link zur Stelle im VOD. Ohne diese Option kommt dort nur ein
+  Hinweis an, in welchem Ordner die Clips liegen.
+- **Upload-Grenze des Servers:** Discord nimmt pro Datei nur so viel an, wie
+  der Server erlaubt: 10 MB ohne Boost, 50 MB ab Boost-Stufe 2, 100 MB ab
+  Stufe 3. Über den Webhook lässt sich die Boost-Stufe nicht abfragen. Bei
+  **Automatisch** (Standard) geht jeder Clip deshalb erst in voller Qualität
+  raus. Lehnt Discord ab, wird er mit ffmpeg für 50 MB bzw. 10 MB verkleinert
+  (niedrigere Bitrate, bei Bedarf 720p oder weniger) und noch einmal
+  geschickt. Das Programm merkt sich bis zum Neustart, was bei welchem Webhook
+  geklappt hat, und sagt nach dem Upload, warum verkleinert wurde. Wer die
+  Boost-Stufe kennt, stellt die Grenze fest ein; größere Clips werden dann
+  gleich verkleinert. Die verkleinerten Dateien liegen im Clip-Ordner unter
+  `discord/`. Zur Einordnung: 60 s in 1080p sind etwa 40–70 MB.
 
 Pings wie `@everyone` werden nie ausgelöst, weder aus dem Chat noch aus dem
 eigenen Text.
@@ -429,15 +448,25 @@ neu:
 {
   "discord": {
     "enabled": true,
-    "webhooks": [{ "name": "Mods", "url": "https://discord.com/api/webhooks/…" }],
+    "webhooks": [
+      { "name": "Highlights", "url": "https://discord.com/api/webhooks/…", "purpose": "highlights" },
+      { "name": "Clips", "url": "https://discord.com/api/webhooks/…", "purpose": "clips" }
+    ],
     "message": "Neue Highlights von **{kanal}**: die besten {anzahl} von {gesamt}",
-    "top": 5
+    "top": 5,
+    "uploadClips": true,
+    "uploadLimitMb": 0
   },
   "clips": { "enabled": true, "mode": "highlight", "count": 5, "paddingSeconds": 5, "maxLengthSeconds": 180, "lengthSeconds": 60, "leadSeconds": 45, "quality": "1080p", "dir": "/srv/clips" }
 }
 ```
 
-Über die Kommandozeile geht es mit `npm run analyze -- <VOD> --clips --discord`.
+`purpose` ist `all` (Standard, auch für ältere Einträge ohne das Feld),
+`highlights` oder `clips`. `uploadLimitMb` ist `0` (automatisch), `10`, `50`
+oder `100`.
+
+Über die Kommandozeile geht es mit `npm run analyze -- <VOD> --clips --discord`;
+mit `uploadClips` werden die Clips dabei auch hochgeladen.
 
 ## So wird bewertet
 
