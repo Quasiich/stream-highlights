@@ -183,17 +183,27 @@ export async function installUpdate(info: UpdateInfo, onProgress: (percent: numb
 }
 
 /** Startet die (neue) .exe in einem eigenen Konsolenfenster, ohne erneut den Browser zu öffnen. */
-export function launchNewVersion(exe = process.execPath, args: string[] = []): void {
+export function launchNewVersion(exe = process.execPath, args: string[] = []): Promise<void> {
   // "start" öffnet ein neues Konsolenfenster; cmd selbst bleibt unsichtbar.
   // --no-open zusätzlich zu --updated, damit auch Versionen ohne --updated
   // keinen zweiten Browser-Tab öffnen.
-  spawn("cmd.exe", ["/d", "/c", "start", '""', `"${exe}"`, "--updated", "--no-open", ...args], {
+  // Nicht detached: Das wäre unter Windows eine neue Prozessgruppe, und darin
+  // ist Strg+C abgeschaltet, vererbt bis in die neue .exe (ließ sich dann nur
+  // per Fenster-X oder Strg+Pause beenden). Dafür beendet Node cmd mit der
+  // alten .exe; deshalb erst aufhören, wenn cmd die neue gestartet hat. Die
+  // neue .exe selbst löst "start" mit eigenem Fenster ab, sie läuft weiter.
+  const child = spawn("cmd.exe", ["/d", "/c", "start", '""', `"${exe}"`, "--updated", "--no-open", ...args], {
     cwd: dirname(exe),
-    detached: true,
     stdio: "ignore",
     windowsHide: true,
     windowsVerbatimArguments: true,
-  }).unref();
+  });
+  return new Promise<void>((done) => {
+    child.once("exit", () => done());
+    child.once("error", () => done());
+    // Hängt cmd wider Erwarten, trotzdem weitermachen
+    setTimeout(done, 10_000).unref();
+  });
 }
 
 /** Nur die .exe kann sich selbst ersetzen, nicht der Quellcode (`npm start`). */

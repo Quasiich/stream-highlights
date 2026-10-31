@@ -575,7 +575,7 @@ async function restartIntoNewVersion(): Promise<void> {
   const portIndex = process.argv.indexOf("--port");
   if (portIndex > 0 && process.argv[portIndex + 1]) args.push("--port", process.argv[portIndex + 1]);
   if (process.argv.includes("--no-minimize")) args.push("--no-minimize");
-  launchNewVersion(process.execPath, args);
+  await launchNewVersion(process.execPath, args);
   setTimeout(() => process.exit(0), 300);
 }
 
