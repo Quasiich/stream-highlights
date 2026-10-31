@@ -96,6 +96,8 @@
     font: inherit; color: var(--text);
   }
   textarea { resize: vertical; min-height: 92px; line-height: 1.4; }
+  /* Wächst per Skript mit, deshalb ohne Scrollbalken */
+  #voiceKeywords { overflow-y: hidden; }
   select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   input:focus-visible, .btn:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .analyze-form { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -602,6 +604,16 @@ function applyVoice(v) {
   renderVoiceBox();
 }
 
+/** Das Stichwort-Feld wächst mit jeder Zeile mit, statt zu scrollen */
+function fitKeywords() {
+  const el = $("voiceKeywords");
+  if (!el.offsetParent) return;
+  el.style.height = "auto";
+  el.style.height = el.scrollHeight + (el.offsetHeight - el.clientHeight) + "px";
+}
+$("voiceKeywords").addEventListener("input", fitKeywords);
+window.addEventListener("resize", fitKeywords);
+
 function readVoice() {
   return {
     enabled: $("voiceEnabled").checked,
@@ -619,6 +631,8 @@ function renderVoiceBox() {
   // Derselbe Schalter steht als „Ton auswerten“ auch beim Live-Mitschnitt
   $("liveVoice").checked = $("voiceEnabled").checked;
   $("voiceBody").classList.toggle("hidden", !$("voiceEnabled").checked);
+  // Erst sichtbar lässt sich die Höhe messen
+  fitKeywords();
   for (const el of $("loudOptions").querySelectorAll("input")) el.disabled = !$("voiceLoud").checked;
   $("loudHelp").classList.toggle("muted", !$("voiceLoud").checked);
   if ($("voiceEnabled").checked) scheduleEstimate();
